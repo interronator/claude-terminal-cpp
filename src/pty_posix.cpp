@@ -9,128 +9,221 @@
 
 #include <atomic>
 #include <cstdlib>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include "pty_host.h"
 
-namespace {
+extern char** environ;
 
-std::string shQuote(const std::string& s) {
-  std::string out = "'";
-  for (char c : s) {
-    if (c == '\'') out += "'\\''";
-    else out += c;
-  }
-  return out + "'";
-}
+namespace
+{
 
-class PosixPty : public Pty {
- public:
-  ~PosixPty() override {
-    kill();
-    if (reader_.joinable()) reader_.join();
-    if (fd_ >= 0) ::close(fd_);
-  }
-
-  bool start(const std::vector<std::string>& argv, const std::string& cwd, int cols, int rows, PtyCallbacks cb,
-             std::string& err) override {
-    if (argv.empty()) {
-      err = "empty command";
-      return false;
-    }
-    cb_ = std::move(cb);
-    std::string cmd = "exec";
-    for (auto& a : argv) cmd += " " + shQuote(a);
-    const char* sh = std::getenv("SHELL");
-    std::string shell = (sh && *sh) ? sh : "/bin/bash";
-
-    struct winsize ws {};
-    ws.ws_col = (unsigned short)cols;
-    ws.ws_row = (unsigned short)rows;
-    pid_ = forkpty(&fd_, nullptr, nullptr, &ws);
-    if (pid_ < 0) {
-      err = "forkpty failed";
-      return false;
-    }
-    if (pid_ == 0) {
-      // A parent that started us in the background may have left these ignored; children must not inherit that.
-      for (int sig : {SIGINT, SIGQUIT, SIGTERM, SIGHUP, SIGPIPE, SIGCHLD}) signal(sig, SIG_DFL);
-      sigset_t none;
-      sigemptyset(&none);
-      sigprocmask(SIG_SETMASK, &none, nullptr);
-      if (!cwd.empty() && chdir(cwd.c_str()) != 0) _exit(126);
-      setenv("TERM", "xterm-256color", 1);
-      setenv("COLORTERM", "truecolor", 1);
-      execl(shell.c_str(), shell.c_str(), "-lc", cmd.c_str(), (char*)nullptr);
-      _exit(127);
-    }
-    reader_ = std::thread([this] { readLoop(); });
-    return true;
-  }
-
-  void write(const char* data, size_t n) override {
-    while (n > 0 && fd_ >= 0) {
-      ssize_t w = ::write(fd_, data, n);
-      if (w < 0) {
-        if (errno == EINTR || errno == EAGAIN) continue;
-        return;
-      }
-      data += w;
-      n -= (size_t)w;
-    }
-  }
-
-  void resize(int cols, int rows) override {
-    struct winsize ws {};
-    ws.ws_col = (unsigned short)cols;
-    ws.ws_row = (unsigned short)rows;
-    if (fd_ >= 0) ioctl(fd_, TIOCSWINSZ, &ws);
-  }
-
-  void kill() override {
-    stop_ = true;
-    if (pid_ > 0 && !reaped_) {
-      ::kill(-pid_, SIGHUP);
-      ::kill(-pid_, SIGTERM);
-      ::kill(-pid_, SIGKILL);
-    }
-  }
-
- private:
-  void readLoop() {
-    char buf[16384];
-    for (;;) {
-      struct pollfd p {fd_, POLLIN, 0};
-      int r = poll(&p, 1, 100);
-      if (r < 0 && errno != EINTR) break;
-      if (r > 0) {
-        ssize_t n = ::read(fd_, buf, sizeof buf);
-        if (n > 0) {
-          if (!stop_ && cb_.onData) cb_.onData(buf, (size_t)n);
-          continue;
+class PosixPty : public Pty
+{
+public:
+    ~PosixPty() override
+    {
+        Kill();
+        if (Reader_.joinable())
+        {
+            Reader_.join();
         }
-        if (n == 0 || (errno != EINTR && errno != EAGAIN)) break;
-      }
-      if (stop_) break;
+        if (Fd_ >= 0)
+        {
+            ::close(Fd_);
+        }
     }
-    int status = 0;
-    int code = -1;
-    if (waitpid(pid_, &status, stop_ ? WNOHANG : 0) > 0 || stop_) {
-      if (WIFEXITED(status)) code = WEXITSTATUS(status);
-      else if (WIFSIGNALED(status)) code = 128 + WTERMSIG(status);
-    }
-    reaped_ = true;
-    if (!stop_ && cb_.onExit) cb_.onExit(code);
-  }
 
-  PtyCallbacks cb_;
-  pid_t pid_ = -1;
-  int fd_ = -1;
-  std::thread reader_;
-  std::atomic<bool> stop_{false};
-  std::atomic<bool> reaped_{false};
+    bool Start(const std::vector<std::string>& argv, const std::string& cwd, int cols, int rows, PtyCallbacks callbacks,
+               std::string& err) override
+    {
+        if (argv.empty())
+        {
+            err = "empty command";
+            return false;
+        }
+        Callbacks_ = std::move(callbacks);
+        std::string command = "exec";
+        for (auto& arg : argv)
+        {
+            command += " " + ShellQuote(arg);
+        }
+        const char* shellEnv = std::getenv("SHELL");
+        std::string shell = (shellEnv != nullptr && *shellEnv != '\0') ? shellEnv : "/bin/bash";
+
+        std::vector<std::string> environmentStrings;
+        for (char* const* entry = environ; entry != nullptr && *entry != nullptr; entry++)
+        {
+            const std::string Entry = *entry;
+            if (Entry.rfind("TERM=", 0) == 0 || Entry.rfind("COLORTERM=", 0) == 0)
+            {
+                continue;
+            }
+            environmentStrings.push_back(Entry);
+        }
+        environmentStrings.push_back("TERM=xterm-256color");
+        environmentStrings.push_back("COLORTERM=truecolor");
+        std::vector<char*> environmentPointers;
+        for (std::string& Entry : environmentStrings)
+        {
+            environmentPointers.push_back(Entry.data());
+        }
+        environmentPointers.push_back(nullptr);
+        const char* const cwdPath = cwd.empty() == true ? nullptr : cwd.c_str();
+
+        struct winsize windowSize {};
+        windowSize.ws_col = (unsigned short)cols;
+        windowSize.ws_row = (unsigned short)rows;
+        Pid_ = forkpty(&Fd_, nullptr, nullptr, &windowSize);
+        if (Pid_ < 0)
+        {
+            err = "forkpty failed";
+            return false;
+        }
+        if (Pid_ == 0)
+        {
+            // A parent that started us in the background may have left these ignored; children must not inherit that.
+            for (int signalNumber : {SIGINT, SIGQUIT, SIGTERM, SIGHUP, SIGPIPE, SIGCHLD})
+            {
+                signal(signalNumber, SIG_DFL);
+            }
+            sigset_t none;
+            sigemptyset(&none);
+            sigprocmask(SIG_SETMASK, &none, nullptr);
+            if (cwdPath != nullptr && chdir(cwdPath) != 0)
+            {
+                _exit(126);
+            }
+            execle(shell.c_str(), shell.c_str(), "-lc", command.c_str(), (char*)nullptr, environmentPointers.data());
+            _exit(127);
+        }
+        Reader_ = std::thread([this] { ReadLoop(); });
+        return true;
+    }
+
+    void Write(const char* data, size_t length) override
+    {
+        while (length > 0 && Fd_ >= 0)
+        {
+            ssize_t written = ::write(Fd_, data, length);
+            if (written < 0)
+            {
+                if (errno == EINTR || errno == EAGAIN)
+                {
+                    continue;
+                }
+                return;
+            }
+            data += written;
+            length -= (size_t)written;
+        }
+    }
+
+    void Resize(int cols, int rows) override
+    {
+        struct winsize windowSize {};
+        windowSize.ws_col = (unsigned short)cols;
+        windowSize.ws_row = (unsigned short)rows;
+        if (Fd_ >= 0)
+        {
+            ioctl(Fd_, TIOCSWINSZ, &windowSize);
+        }
+    }
+
+    void Kill() override
+    {
+        Stop_ = true;
+        if (Pid_ > 0 && Reaped_ == false)
+        {
+            ::kill(-Pid_, SIGHUP);
+            ::kill(-Pid_, SIGTERM);
+            ::kill(-Pid_, SIGKILL);
+        }
+    }
+
+private:
+    static std::string ShellQuote(const std::string& text)
+    {
+        std::string out = "'";
+        for (char character : text)
+        {
+            if (character == '\'')
+            {
+                out += "'\\''";
+            }
+            else
+            {
+                out += character;
+            }
+        }
+        return out + "'";
+    }
+
+    void ReadLoop()
+    {
+        char buffer[16384];
+        for (;;)
+        {
+            struct pollfd pollInfo {Fd_, POLLIN, 0};
+            int pollResult = poll(&pollInfo, 1, 100);
+            if (pollResult < 0 && errno != EINTR)
+            {
+                break;
+            }
+            if (pollResult > 0)
+            {
+                ssize_t bytesRead = ::read(Fd_, buffer, sizeof buffer);
+                if (bytesRead > 0)
+                {
+                    if (Stop_ == false && Callbacks_.OnData)
+                    {
+                        Callbacks_.OnData(buffer, (size_t)bytesRead);
+                    }
+                    continue;
+                }
+                if (bytesRead == 0 || (errno != EINTR && errno != EAGAIN))
+                {
+                    break;
+                }
+            }
+            if (Stop_)
+            {
+                break;
+            }
+        }
+        int status = 0;
+        int exitCode = -1;
+        if (waitpid(Pid_, &status, Stop_ ? WNOHANG : 0) > 0 || Stop_)
+        {
+            if (WIFEXITED(status))
+            {
+                exitCode = WEXITSTATUS(status);
+            }
+            else if (WIFSIGNALED(status))
+            {
+                exitCode = 128 + WTERMSIG(status);
+            }
+        }
+        Reaped_ = true;
+        if (Stop_ == false && Callbacks_.OnExit)
+        {
+            Callbacks_.OnExit(exitCode);
+        }
+    }
+
+    PtyCallbacks Callbacks_;
+    pid_t Pid_ = -1;
+    int Fd_ = -1;
+    std::thread Reader_;
+    std::atomic<bool> Stop_{false};
+    std::atomic<bool> Reaped_{false};
 };
 
 }  // namespace
 
-std::unique_ptr<Pty> Pty::create() { return std::make_unique<PosixPty>(); }
+std::unique_ptr<Pty> Pty::Create()
+{
+    return std::make_unique<PosixPty>();
+}

@@ -4,6 +4,7 @@ project(ClaudeTerminal LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 99)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release)
 endif()
@@ -22,7 +23,8 @@ FetchContent_Declare(glfw GIT_REPOSITORY https://github.com/glfw/glfw.git GIT_TA
 FetchContent_Declare(imgui GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG v1.91.9b GIT_SHALLOW ON)
 FetchContent_Declare(libvterm GIT_REPOSITORY https://github.com/neovim/libvterm.git GIT_TAG 934bc2fbf21800ac3458a499df8820ca5fb45fd3)
 FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
-FetchContent_MakeAvailable(glfw imgui libvterm json)
+FetchContent_Declare(stb GIT_REPOSITORY https://github.com/nothings/stb.git GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20)
+FetchContent_MakeAvailable(glfw imgui libvterm json stb)
 
 # libvterm ships a Makefile, not CMake: build it ourselves.
 file(GLOB VTERM_SOURCES ${libvterm_SOURCE_DIR}/src/*.c)
@@ -49,7 +51,7 @@ find_package(OpenGL REQUIRED)
 # ---- the app ---------------------------------------------------------------
 set(APP_SOURCES
   src/main.cpp src/app.cpp src/session.cpp src/terminal.cpp
-  src/git.cpp src/store.cpp src/util.cpp src/style.cpp src/usage.cpp)
+  src/git.cpp src/store.cpp)
 if(WIN32)
   list(APPEND APP_SOURCES src/pty_win.cpp src/platform_win.cpp resources/app.rc)
 else()
@@ -57,7 +59,7 @@ else()
 endif()
 
 add_executable(claude-terminal ${APP_SOURCES})
-target_include_directories(claude-terminal PRIVATE src)
+target_include_directories(claude-terminal PRIVATE src ${stb_SOURCE_DIR})
 target_link_libraries(claude-terminal PRIVATE imgui vterm nlohmann_json::nlohmann_json OpenGL::GL)
 
 if(WIN32)

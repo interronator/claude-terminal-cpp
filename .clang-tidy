@@ -1,0 +1,73 @@
+Checks: >
+  -*,
+  readability-identifier-naming,
+  readability-implicit-bool-conversion
+
+WarningsAsErrors: ''
+HeaderFilterRegex: '(^|[/\\])src[/\\]'
+FormatStyle: none
+
+CheckOptions:
+  # Flag implicit bool conversions, e.g. `if (ptr)` / `if (intVar)`.
+  # Does NOT catch `!alreadyBoolExpr` (e.g. `!x.empty()`) — that has no
+  # standard clang-tidy check; catch it in code review instead.
+  - key: readability-implicit-bool-conversion.AllowPointerConditions
+    value: 'false'
+
+  # ---- Types ----
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumCase
+    value: CamelCase
+  - key: readability-identifier-naming.UnionCase
+    value: CamelCase
+  - key: readability-identifier-naming.TypeAliasCase
+    value: CamelCase
+  - key: readability-identifier-naming.TypedefCase
+    value: CamelCase
+
+  # ---- Functions / methods ----
+  - key: readability-identifier-naming.FunctionCase
+    value: CamelCase
+  - key: readability-identifier-naming.MethodCase
+    value: CamelCase
+
+  # ---- Variables / parameters ----
+  - key: readability-identifier-naming.VariableCase
+    value: CamelCase
+  - key: readability-identifier-naming.LocalVariableCase
+    value: CamelCase
+  - key: readability-identifier-naming.LocalConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.ParameterCase
+    value: CamelCase
+  - key: readability-identifier-naming.GlobalVariableCase
+    value: CamelCase
+  - key: readability-identifier-naming.StaticVariableCase
+    value: CamelCase
+
+  # ---- Members (matches existing App_/State_ trailing-underscore style for private) ----
+  - key: readability-identifier-naming.PublicMemberCase
+    value: CamelCase
+  - key: readability-identifier-naming.ProtectedMemberCase
+    value: CamelCase
+  - key: readability-identifier-naming.ProtectedMemberSuffix
+    value: '_'
+  - key: readability-identifier-naming.PrivateMemberCase
+    value: CamelCase
+  - key: readability-identifier-naming.PrivateMemberSuffix
+    value: '_'
+
+  # ---- True constants / macros: SCREAMING_SNAKE_CASE ----
+  - key: readability-identifier-naming.GlobalConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.StaticConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.ClassConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.ConstexprVariableCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.MacroDefinitionCase
+    value: UPPER_CASE

@@ -1,6 +1,7 @@
 #include "git.h"
 
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -8,7 +9,7 @@
 #include "util.h"
 
 #ifdef _WIN32
-#include <windows.h>
+#include "win_strings.h"
 #else
 #include <fcntl.h>
 #include <sys/wait.h>
@@ -18,194 +19,318 @@
 namespace fs = std::filesystem;
 
 #ifdef _WIN32
-static std::wstring widen(const std::string& s) {
-  if (s.empty()) return {};
-  int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-  std::wstring w((size_t)n, L'\0');
-  MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), w.data(), n);
-  return w;
-}
-
-static std::wstring quote(const std::wstring& a) {
-  if (!a.empty() && a.find_first_of(L" \t\"") == std::wstring::npos) return a;
-  std::wstring out = L"\"";
-  size_t bs = 0;
-  for (wchar_t c : a) {
-    if (c == L'\\') bs++;
-    else if (c == L'"') {
-      out.append(bs * 2 + 1, L'\\');
-      out += L'"';
-      bs = 0;
-    } else {
-      out.append(bs, L'\\');
-      bs = 0;
-      out += c;
+ProcResult Git::RunProcess(const std::vector<std::string>& Argv, const std::string& Cwd)
+{
+    ProcResult Result;
+    SECURITY_ATTRIBUTES SecurityAttributes{sizeof(SecurityAttributes), nullptr, TRUE};
+    HANDLE ReadHandle = nullptr, WriteHandle = nullptr;
+    if (CreatePipe(&ReadHandle, &WriteHandle, &SecurityAttributes, 0) == FALSE)
+    {
+        return Result;
     }
-  }
-  out.append(bs * 2, L'\\');
-  return out + L"\"";
-}
+    SetHandleInformation(ReadHandle, HANDLE_FLAG_INHERIT, 0);
 
-ProcResult runProcess(const std::vector<std::string>& argv, const std::string& cwd) {
-  ProcResult res;
-  SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
-  HANDLE rd = nullptr, wr = nullptr;
-  if (!CreatePipe(&rd, &wr, &sa, 0)) return res;
-  SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
-
-  std::wstring cmd;
-  for (size_t i = 0; i < argv.size(); i++) {
-    if (i) cmd += L' ';
-    cmd += quote(widen(argv[i]));
-  }
-  STARTUPINFOW si{};
-  si.cb = sizeof(si);
-  si.dwFlags = STARTF_USESTDHANDLES;
-  si.hStdOutput = si.hStdError = wr;
-  si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-  PROCESS_INFORMATION pi{};
-  std::wstring wcwd = widen(cwd);
-  BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
-                           wcwd.empty() ? nullptr : wcwd.c_str(), &si, &pi);
-  CloseHandle(wr);
-  if (!ok) {
-    CloseHandle(rd);
-    res.out = "could not start " + (argv.empty() ? std::string("process") : argv[0]);
-    return res;
-  }
-  char buf[4096];
-  DWORD n = 0;
-  while (ReadFile(rd, buf, sizeof buf, &n, nullptr) && n > 0) res.out.append(buf, n);
-  WaitForSingleObject(pi.hProcess, INFINITE);
-  DWORD code = 1;
-  GetExitCodeProcess(pi.hProcess, &code);
-  res.code = (int)code;
-  CloseHandle(pi.hProcess);
-  CloseHandle(pi.hThread);
-  CloseHandle(rd);
-  return res;
+    std::wstring CommandLine;
+    for (size_t Index = 0; Index < Argv.size(); Index++)
+    {
+        if (Index != 0)
+        {
+            CommandLine += L' ';
+        }
+        CommandLine += WinStrings::QuoteArg(WinStrings::Widen(Argv[Index]));
+    }
+    STARTUPINFOW StartupInfo{};
+    StartupInfo.cb = sizeof(StartupInfo);
+    StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    StartupInfo.hStdOutput = StartupInfo.hStdError = WriteHandle;
+    StartupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    PROCESS_INFORMATION ProcessInfo{};
+    std::wstring const WideCwd = WinStrings::Widen(Cwd);
+    BOOL const Ok = CreateProcessW(nullptr, CommandLine.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+                             WideCwd.empty() ? nullptr : WideCwd.c_str(), &StartupInfo, &ProcessInfo);
+    CloseHandle(WriteHandle);
+    if (Ok == FALSE)
+    {
+        CloseHandle(ReadHandle);
+        Result.Output = "could not start " + (Argv.empty() ? std::string("process") : Argv[0]);
+        return Result;
+    }
+    char Buffer[4096];
+    DWORD BytesRead = 0;
+    while (ReadFile(ReadHandle, Buffer, sizeof Buffer, &BytesRead, nullptr) != FALSE && BytesRead > 0)
+    {
+        Result.Output.append(Buffer, BytesRead);
+    }
+    WaitForSingleObject(ProcessInfo.hProcess, INFINITE);
+    DWORD ExitCode = 1;
+    GetExitCodeProcess(ProcessInfo.hProcess, &ExitCode);
+    Result.Code = (int)ExitCode;
+    CloseHandle(ProcessInfo.hProcess);
+    CloseHandle(ProcessInfo.hThread);
+    CloseHandle(ReadHandle);
+    return Result;
 }
 #else
-ProcResult runProcess(const std::vector<std::string>& argv, const std::string& cwd) {
-  ProcResult res;
-  int fds[2];
-  if (pipe(fds) != 0) return res;
-  pid_t pid = fork();
-  if (pid < 0) return res;
-  if (pid == 0) {
-    dup2(fds[1], 1);
-    dup2(fds[1], 2);
-    close(fds[0]);
-    close(fds[1]);
-    if (!cwd.empty() && chdir(cwd.c_str()) != 0) _exit(126);
+ProcResult Git::RunProcess(const std::vector<std::string>& argv, const std::string& cwd)
+{
+    ProcResult result;
+    int fds[2];
+    if (pipe(fds) != 0)
+    {
+        return result;
+    }
     std::vector<char*> args;
-    for (auto& a : argv) args.push_back(const_cast<char*>(a.c_str()));
+    for (const std::string& arg : argv)
+    {
+        args.push_back(const_cast<char*>(arg.c_str()));
+    }
     args.push_back(nullptr);
-    execvp(args[0], args.data());
-    _exit(127);
-  }
-  close(fds[1]);
-  char buf[4096];
-  ssize_t n;
-  while ((n = read(fds[0], buf, sizeof buf)) > 0) res.out.append(buf, (size_t)n);
-  close(fds[0]);
-  int status = 0;
-  waitpid(pid, &status, 0);
-  res.code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-  return res;
+    const char* const cwdPath = cwd.empty() == true ? nullptr : cwd.c_str();
+    pid_t pid = fork();
+    if (pid < 0)
+    {
+        close(fds[0]);
+        close(fds[1]);
+        return result;
+    }
+    if (pid == 0)
+    {
+        dup2(fds[1], 1);
+        dup2(fds[1], 2);
+        close(fds[0]);
+        close(fds[1]);
+        if (cwdPath != nullptr && chdir(cwdPath) != 0)
+        {
+            _exit(126);
+        }
+        execvp(args[0], args.data());
+        _exit(127);
+    }
+    close(fds[1]);
+    char buffer[4096];
+    ssize_t bytesRead;
+    while ((bytesRead = read(fds[0], buffer, sizeof buffer)) > 0)
+    {
+        result.Output.append(buffer, (size_t)bytesRead);
+    }
+    close(fds[0]);
+    int status = 0;
+    waitpid(pid, &status, 0);
+    result.Code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    return result;
 }
 #endif
 
-namespace git {
-
-static std::string firstLine(const std::string& s) {
-  size_t e = s.find_first_of("\r\n");
-  return util::trim(e == std::string::npos ? s : s.substr(0, e));
-}
-
-static std::string normalize(const std::string& p) { return fs::path(p).lexically_normal().make_preferred().string(); }
-
-Info info(const std::string& dir) {
-  Info i;
-  auto r = runProcess({"git", "rev-parse", "--show-toplevel"}, dir);
-  if (r.code != 0) return i;
-  i.isGit = true;
-  i.root = normalize(firstLine(r.out));
-  auto b = runProcess({"git", "rev-parse", "--abbrev-ref", "HEAD"}, dir);
-  if (b.code == 0) i.branch = firstLine(b.out);
-  return i;
-}
-
-static void excludeWorktreeDir(const std::string& root) {
-  auto r = runProcess({"git", "rev-parse", "--git-path", "info/exclude"}, root);
-  if (r.code != 0) return;
-  fs::path file(firstLine(r.out));
-  if (file.is_relative()) file = fs::path(root) / file;
-  const std::string line = ".claude/worktrees/";
-  std::string existing;
-  {
-    std::ifstream in(file);
-    if (in) existing.assign(std::istreambuf_iterator<char>(in), {});
-  }
-  if (existing.find(line) != std::string::npos) return;
-  std::error_code ec;
-  fs::create_directories(file.parent_path(), ec);
-  std::ofstream out(file, std::ios::app);
-  if (out) out << (existing.empty() || existing.back() == '\n' ? "" : "\n") << line << "\n";
-}
-
-bool createWorktree(const std::string& projectPath, const std::string& name, Worktree& out, std::string& err) {
-  Info i = info(projectPath);
-  if (!i.isGit) {
-    err = "This project folder is not inside a git repository.";
-    return false;
-  }
-  std::string s = util::slug(name);
-  if (s.empty()) s = "session";
-  std::string suffix = util::uuid4().substr(0, 4);
-  std::string branch = "claude/" + s + "-" + suffix;
-  fs::path wt = fs::path(i.root) / ".claude" / "worktrees" / (s + "-" + suffix);
-  auto r = runProcess({"git", "worktree", "add", "-b", branch, wt.string()}, i.root);
-  if (r.code != 0) {
-    err = util::trim(r.out);
-    return false;
-  }
-  excludeWorktreeDir(i.root);
-  std::error_code ec;
-  fs::path rel = fs::relative(fs::weakly_canonical(projectPath, ec), fs::weakly_canonical(i.root, ec), ec);
-  out.repoRoot = i.root;
-  out.branch = branch;
-  out.path = wt.string();
-  out.cwd = (ec || rel.empty() || rel == ".") ? wt.string() : (wt / rel).string();
-  return true;
-}
-
-bool isDirty(const std::string& path) {
-  auto r = runProcess({"git", "status", "--porcelain"}, path);
-  return r.code == 0 && !util::trim(r.out).empty();
-}
-
-bool removeWorktree(const std::string& repoRoot, const std::string& path, const std::string& branch, bool force,
-                    bool& branchKept, std::string& err) {
-  std::vector<std::string> args = {"git", "worktree", "remove", path};
-  if (force) args.push_back("--force");
-  ProcResult r;
-  for (int i = 0; i < 4; i++) {
-    r = runProcess(args, repoRoot);
-    if (r.code == 0 || r.out.find("not a working tree") != std::string::npos ||
-        r.out.find("is not registered") != std::string::npos) {
-      r.code = 0;
-      break;
+Git::GitHubStatus Git::QueryGitHub()
+{
+    GitHubStatus Status;
+    const ProcResult Result = RunProcess({"gh", "auth", "status", "--hostname", "github.com"}, "");
+    if (Result.Code == -1 || Result.Code == 127)
+    {
+        Status.Value = GitHubStatus::State::NotInstalled;
+        return Status;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-  }
-  if (r.code != 0) {
-    err = util::trim(r.out);
-    return false;
-  }
-  auto b = runProcess({"git", "branch", force ? "-D" : "-d", branch}, repoRoot);
-  branchKept = b.code != 0;  // unmerged work stays reachable on its branch
-  return true;
+    if (Result.Code != 0)
+    {
+        Status.Value = GitHubStatus::State::LoggedOut;
+        return Status;
+    }
+    Status.Value = GitHubStatus::State::LoggedIn;
+    const std::string Header = "Logged in to";
+    std::string FirstUser;
+    size_t BlockAt = Result.Output.find(Header);
+    while (BlockAt != std::string::npos)
+    {
+        const size_t NextAt = Result.Output.find(Header, BlockAt + Header.size());
+        const std::string Block = Result.Output.substr(BlockAt, NextAt == std::string::npos ? std::string::npos : NextAt - BlockAt);
+        const std::string BlockUser = ExtractAccountName(Block);
+        if (FirstUser.empty() == true)
+        {
+            FirstUser = BlockUser;
+        }
+        if (Block.find("Active account: true") != std::string::npos)
+        {
+            Status.User = BlockUser;
+            break;
+        }
+        BlockAt = NextAt;
+    }
+    if (Status.User.empty() == true)
+    {
+        Status.User = FirstUser;
+    }
+    return Status;
 }
 
-}  // namespace git
+bool Git::LogoutGitHub(const std::string& User, std::string& Error)
+{
+    std::vector<std::string> Arguments = {"gh", "auth", "logout", "--hostname", "github.com"};
+    if (User.empty() == false)
+    {
+        Arguments.push_back("--user");
+        Arguments.push_back(User);
+    }
+    ProcResult Result = RunProcess(Arguments, "");
+    if (Result.Code != 0 && User.empty() == false && Result.Output.find("unknown flag") != std::string::npos)
+    {
+        Result = RunProcess({"gh", "auth", "logout", "--hostname", "github.com"}, "");
+    }
+    if (Result.Code == 0)
+    {
+        return true;
+    }
+    Error = Util::Trim(Result.Output);
+    if (Error.empty() == true)
+    {
+        Error = "gh auth logout failed.";
+    }
+    return false;
+}
+
+std::string Git::ExtractAccountName(const std::string& Block)
+{
+    for (const char* const Marker : {" account ", " as "})
+    {
+        const size_t MarkerAt = Block.find(Marker);
+        if (MarkerAt == std::string::npos)
+        {
+            continue;
+        }
+        const size_t NameStart = MarkerAt + std::strlen(Marker);
+        const size_t NameEnd = Block.find_first_of(" \r\n(", NameStart);
+        return Block.substr(NameStart, NameEnd == std::string::npos ? std::string::npos : NameEnd - NameStart);
+    }
+    return std::string();
+}
+
+std::string Git::FirstLine(const std::string& Text)
+{
+    size_t const End = Text.find_first_of("\r\n");
+    return Util::Trim(End == std::string::npos ? Text : Text.substr(0, End));
+}
+
+std::string Git::Normalize(const std::string& Path)
+{
+    return fs::path(Path).lexically_normal().make_preferred().string();
+}
+
+Git::Info Git::GetInfo(const std::string& Dir)
+{
+    Info Info;
+    ProcResult const Toplevel = RunProcess({"git", "rev-parse", "--show-toplevel"}, Dir);
+    if (Toplevel.Code != 0)
+    {
+        return Info;
+    }
+    Info.IsGitRepo = true;
+    Info.Root = Normalize(FirstLine(Toplevel.Output));
+    ProcResult const Branch = RunProcess({"git", "rev-parse", "--abbrev-ref", "HEAD"}, Dir);
+    if (Branch.Code == 0)
+    {
+        Info.Branch = FirstLine(Branch.Output);
+    }
+    return Info;
+}
+
+void Git::ExcludeWorktreeDir(const std::string& Root)
+{
+    ProcResult const ExcludePath = RunProcess({"git", "rev-parse", "--git-path", "info/exclude"}, Root);
+    if (ExcludePath.Code != 0)
+    {
+        return;
+    }
+    fs::path File(FirstLine(ExcludePath.Output));
+    if (File.is_relative())
+    {
+        File = fs::path(Root) / File;
+    }
+    const std::string Line = ".claude/worktrees/";
+    std::string Existing;
+    {
+        std::ifstream In(File);
+        if (In.good())
+        {
+            Existing.assign(std::istreambuf_iterator<char>(In), {});
+        }
+    }
+    if (Existing.find(Line) != std::string::npos)
+    {
+        return;
+    }
+    std::error_code ErrorCode;
+    fs::create_directories(File.parent_path(), ErrorCode);
+    std::ofstream Out(File, std::ios::app);
+    if (Out.good())
+    {
+        Out << (Existing.empty() || Existing.back() == '\n' ? "" : "\n") << Line << "\n";
+    }
+}
+
+bool Git::CreateWorktree(const std::string& ProjectPath, const std::string& Name, Worktree& Out, std::string& Err)
+{
+    Info const Info = GetInfo(ProjectPath);
+    if (Info.IsGitRepo == false)
+    {
+        Err = "This project folder is not inside a git repository.";
+        return false;
+    }
+    std::string Slug = Util::Slug(Name);
+    if (Slug.empty())
+    {
+        Slug = "session";
+    }
+    std::string const Suffix = Util::Uuid4().substr(0, 4);
+    std::string const Branch = "claude/" + Slug + "-" + Suffix;
+    fs::path const WorktreePath = fs::path(Info.Root) / ".claude" / "worktrees" / (Slug + "-" + Suffix);
+    ProcResult const AddResult = RunProcess({"git", "worktree", "add", "-b", Branch, WorktreePath.string()}, Info.Root);
+    if (AddResult.Code != 0)
+    {
+        Err = Util::Trim(AddResult.Output);
+        return false;
+    }
+    ExcludeWorktreeDir(Info.Root);
+    std::error_code ErrorCode;
+    fs::path const Relative = fs::relative(fs::weakly_canonical(ProjectPath, ErrorCode), fs::weakly_canonical(Info.Root, ErrorCode),
+                                      ErrorCode);
+    Out.RepoRoot = Info.Root;
+    Out.Branch = Branch;
+    Out.Path = WorktreePath.string();
+    Out.Cwd = (ErrorCode || Relative.empty() || Relative == ".") ? WorktreePath.string() : (WorktreePath / Relative).string();
+    return true;
+}
+
+bool Git::IsDirty(const std::string& Path)
+{
+    ProcResult const Status = RunProcess({"git", "status", "--porcelain"}, Path);
+    return Status.Code == 0 && Util::Trim(Status.Output).empty() == false;
+}
+
+bool Git::RemoveWorktree(const std::string& RepoRoot, const std::string& Path, const std::string& Branch, bool Force,
+                         bool& BranchKept, std::string& Err)
+{
+    std::vector<std::string> Args = {"git", "worktree", "remove", Path};
+    if (Force)
+    {
+        Args.push_back("--force");
+    }
+    ProcResult Result;
+    for (int Attempt = 0; Attempt < 4; Attempt++)
+    {
+        Result = RunProcess(Args, RepoRoot);
+        if (Result.Code == 0 || Result.Output.find("not a working tree") != std::string::npos ||
+            Result.Output.find("is not registered") != std::string::npos)
+        {
+            Result.Code = 0;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    if (Result.Code != 0)
+    {
+        Err = Util::Trim(Result.Output);
+        return false;
+    }
+    ProcResult const BranchResult = RunProcess({"git", "branch", Force ? "-D" : "-d", Branch}, RepoRoot);
+    BranchKept = BranchResult.Code != 0;  // unmerged work stays reachable on its branch
+    return true;
+}

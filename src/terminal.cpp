@@ -5,189 +5,479 @@
 
 #include "util.h"
 
-namespace {
-inline uint32_t packRgb(const VTermColor& c) {
-  return ((uint32_t)c.rgb.red << 16) | ((uint32_t)c.rgb.green << 8) | c.rgb.blue;
+namespace
+{
+inline uint32_t PackRgb(const VTermColor& Color)
+{
+    return ((uint32_t)Color.rgb.red << 16) | ((uint32_t)Color.rgb.green << 8) | Color.rgb.blue;
 }
-inline void setRgb(VTermColor& c, uint32_t v) { vterm_color_rgb(&c, (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF); }
+inline void SetRgb(VTermColor& Color, uint32_t Value)
+{
+    vterm_color_rgb(&Color, (Value >> 16) & 0xFF, (Value >> 8) & 0xFF, Value & 0xFF);
+}
 
-constexpr uint32_t kDefaultFg = 0xE6E8EE, kDefaultBg = 0x0B0D11;
-const uint32_t kPalette[16] = {0x1B1F2A, 0xEF5B5B, 0x4CC38A, 0xE6A23C, 0x6AA3FF, 0xC58AF9, 0x5CCFE6, 0xC9CFDB,
-                               0x5B6577, 0xFF7B7B, 0x6FDCA8, 0xF3C36B, 0x8CB9FF, 0xD8A8FF, 0x86E0F0, 0xFFFFFF};
+constexpr uint32_t DEFAULT_FG = 0xE6E8EE, DEFAULT_BG = 0x0B0D11;
+const uint32_t PALETTE[16] = {0x1B1F2A, 0xEF5B5B, 0x4CC38A, 0xE6A23C, 0x6AA3FF, 0xC58AF9, 0x5CCFE6, 0xC9CFDB,
+                              0x5B6577, 0xFF7B7B, 0x6FDCA8, 0xF3C36B, 0x8CB9FF, 0xD8A8FF, 0x86E0F0, 0xFFFFFF};
 }  // namespace
 
-Terminal::Terminal(int rows, int cols, OutputFn out) : out_(std::move(out)), rows_(rows), cols_(cols) {
-  vt_ = vterm_new(rows, cols);
-  vterm_set_utf8(vt_, 1);
-  vterm_output_set_callback(vt_, &Terminal::outCb, this);
+Terminal::Terminal(int Rows, int Cols, OutputFn Out) : Out_(std::move(Out)), Rows_(Rows), Cols_(Cols)
+{
+    Vt_ = vterm_new(Rows, Cols);
+    vterm_set_utf8(Vt_, 1);
+    vterm_output_set_callback(Vt_, &Terminal::OutCallback, this);
 
-  screen_ = vterm_obtain_screen(vt_);
-  static const VTermScreenCallbacks callbacks = {
-      nullptr,           // damage (we read cells directly every frame)
-      nullptr,           // moverect
-      nullptr,           // movecursor
-      &Terminal::setProp,
-      nullptr,           // bell
-      &Terminal::onResize,
-      &Terminal::sbPush,
-      &Terminal::sbPop,
-      &Terminal::sbClear,
-      nullptr,           // sb_pushline4
-  };
-  vterm_screen_set_callbacks(screen_, &callbacks, this);
-  vterm_screen_enable_altscreen(screen_, 1);
+    Screen_ = vterm_obtain_screen(Vt_);
+    static const VTermScreenCallbacks CALLBACKS = {
+        nullptr,  // damage (we read cells directly every frame)
+        nullptr,  // moverect
+        nullptr,  // movecursor
+        &Terminal::SetProp,
+        nullptr,  // bell
+        &Terminal::OnResize,
+        &Terminal::ScrollbackPush,
+        &Terminal::ScrollbackPop,
+        &Terminal::ScrollbackClear,
+        nullptr,  // sb_pushline4
+    };
+    vterm_screen_set_callbacks(Screen_, &CALLBACKS, this);
+    vterm_screen_enable_altscreen(Screen_, 1);
 
-  VTermState* state = vterm_obtain_state(vt_);
-  for (int i = 0; i < 16; i++) {
-    VTermColor c;
-    setRgb(c, kPalette[i]);
-    vterm_state_set_palette_color(state, i, &c);
-  }
-  VTermColor fg, bg;
-  setRgb(fg, kDefaultFg);
-  setRgb(bg, kDefaultBg);
-  vterm_screen_set_default_colors(screen_, &fg, &bg);
-  vterm_screen_reset(screen_, 1);
-}
-
-Terminal::~Terminal() { vterm_free(vt_); }
-
-void Terminal::feed(const char* data, size_t n) { vterm_input_write(vt_, data, n); }
-
-void Terminal::resize(int rows, int cols) {
-  if (rows < 1 || cols < 2 || (rows == rows_ && cols == cols_)) return;
-  rows_ = rows;
-  cols_ = cols;
-  vterm_set_size(vt_, rows, cols);
-}
-
-Cell Terminal::convert(const VTermScreenCell& vc) const {
-  Cell c;
-  c.ch = vc.chars[0] == (uint32_t)-1 ? Cell::kContinuation : vc.chars[0];
-  c.width = vc.width ? (uint8_t)vc.width : 1;
-  VTermColor fg = vc.fg, bg = vc.bg;
-  bool defBg = VTERM_COLOR_IS_DEFAULT_BG(&bg);
-  vterm_screen_convert_color_to_rgb(screen_, &fg);
-  vterm_screen_convert_color_to_rgb(screen_, &bg);
-  c.fg = packRgb(fg);
-  c.bg = packRgb(bg);
-  c.defBg = defBg;
-  if (vc.attrs.reverse) {
-    std::swap(c.fg, c.bg);
-    c.defBg = false;
-  }
-  c.bold = vc.attrs.bold;
-  c.italic = vc.attrs.italic;
-  c.underline = vc.attrs.underline != 0;
-  c.strike = vc.attrs.strike;
-  if (vc.attrs.conceal) c.ch = 0;
-  return c;
-}
-
-Cell Terminal::cell(int absRow, int col) const {
-  if (absRow < 0 || col < 0) return Cell{};
-  if (absRow < (int)sb_.size()) {
-    const auto& line = sb_[(size_t)absRow];
-    return col < (int)line.size() ? line[(size_t)col] : Cell{};
-  }
-  int r = absRow - (int)sb_.size();
-  if (r >= rows_ || col >= cols_) return Cell{};
-  VTermScreenCell vc;
-  if (!vterm_screen_get_cell(screen_, VTermPos{r, col}, &vc)) return Cell{};
-  return convert(vc);
-}
-
-void Terminal::cursor(int& row, int& col, bool& visible) const {
-  VTermPos p;
-  vterm_state_get_cursorpos(vterm_obtain_state(vt_), &p);
-  row = p.row;
-  col = p.col;
-  visible = cursorVisible_;
-}
-
-std::string Terminal::text(int row0, int col0, int row1, int col1) const {
-  std::string out;
-  for (int r = row0; r <= row1; r++) {
-    int c0 = r == row0 ? col0 : 0;
-    int c1 = r == row1 ? col1 : cols_ - 1;
-    std::string line;
-    for (int c = c0; c <= c1; c++) {
-      Cell cl = cell(r, c);
-      if (cl.ch == Cell::kContinuation) continue;
-      line += cl.ch ? util::utf8(cl.ch) : " ";
+    VTermState* const State = vterm_obtain_state(Vt_);
+    for (int Index = 0; Index < 16; Index++)
+    {
+        VTermColor Color;
+        SetRgb(Color, PALETTE[Index]);
+        vterm_state_set_palette_color(State, Index, &Color);
     }
-    while (!line.empty() && line.back() == ' ') line.pop_back();
-    out += line;
-    if (r != row1) out += '\n';
-  }
-  return out;
+    VTermColor Fg, Bg;
+    SetRgb(Fg, DEFAULT_FG);
+    SetRgb(Bg, DEFAULT_BG);
+    vterm_screen_set_default_colors(Screen_, &Fg, &Bg);
+    vterm_screen_reset(Screen_, 1);
 }
 
-std::string Terminal::screenText() const {
-  int base = (int)sb_.size();
-  return text(base, 0, base + rows_ - 1, cols_ - 1);
+Terminal::~Terminal()
+{
+    vterm_free(Vt_);
+}
+
+void Terminal::Feed(const char* Data, size_t Length)
+{
+    vterm_input_write(Vt_, Data, Length);
+}
+
+void Terminal::Resize(int Rows, int Cols)
+{
+    if (Rows < 1 || Cols < 2 || (Rows == Rows_ && Cols == Cols_))
+    {
+        return;
+    }
+    Rows_ = Rows;
+    Cols_ = Cols;
+    vterm_set_size(Vt_, Rows, Cols);
+}
+
+Cell Terminal::ConvertCell(const VTermScreenCell& ScreenCell) const
+{
+    Cell Out;
+    Out.Ch = ScreenCell.chars[0] == (uint32_t)-1 ? Cell::CONTINUATION : ScreenCell.chars[0];
+    Out.Width = ScreenCell.width != 0 ? (uint8_t)ScreenCell.width : 1;
+    VTermColor Fg = ScreenCell.fg, Bg = ScreenCell.bg;
+    bool const DefaultBg = VTERM_COLOR_IS_DEFAULT_BG(&Bg);
+    vterm_screen_convert_color_to_rgb(Screen_, &Fg);
+    vterm_screen_convert_color_to_rgb(Screen_, &Bg);
+    Out.Fg = PackRgb(Fg);
+    Out.Bg = PackRgb(Bg);
+    Out.DefBg = DefaultBg;
+    if (ScreenCell.attrs.reverse)
+    {
+        std::swap(Out.Fg, Out.Bg);
+        Out.DefBg = false;
+    }
+    Out.Bold = ScreenCell.attrs.bold;
+    Out.Italic = ScreenCell.attrs.italic;
+    Out.Underline = ScreenCell.attrs.underline != 0;
+    Out.Strike = ScreenCell.attrs.strike;
+    if (ScreenCell.attrs.conceal)
+    {
+        Out.Ch = 0;
+    }
+    return Out;
+}
+
+Cell Terminal::GetCell(int AbsRow, int Col) const
+{
+    if (AbsRow < 0 || Col < 0)
+    {
+        return Cell{};
+    }
+    if (AbsRow < (int)Scrollback_.size())
+    {
+        const std::vector<Cell>& Line = Scrollback_[(size_t)AbsRow];
+        return Col < (int)Line.size() ? Line[(size_t)Col] : Cell{};
+    }
+    int const Row = AbsRow - (int)Scrollback_.size();
+    if (Row >= Rows_ || Col >= Cols_)
+    {
+        return Cell{};
+    }
+    VTermScreenCell ScreenCell;
+    if (vterm_screen_get_cell(Screen_, VTermPos{Row, Col}, &ScreenCell) == 0)
+    {
+        return Cell{};
+    }
+    return ConvertCell(ScreenCell);
+}
+
+std::vector<uint32_t> Terminal::FoldQuery(const std::string& Text)
+{
+    std::vector<uint32_t> Folded;
+    size_t Index = 0;
+    while (Index < Text.size())
+    {
+        const unsigned char Lead = static_cast<unsigned char>(Text[Index]);
+        int Extra = 0;
+        uint32_t CodePoint = Lead;
+        if (Lead >= 0xF0)
+        {
+            Extra = 3;
+            CodePoint = Lead & 0x07;
+        }
+        else if (Lead >= 0xE0)
+        {
+            Extra = 2;
+            CodePoint = Lead & 0x0F;
+        }
+        else if (Lead >= 0xC0)
+        {
+            Extra = 1;
+            CodePoint = Lead & 0x1F;
+        }
+        Index++;
+        for (int Continuation = 0; Continuation < Extra && Index < Text.size(); Continuation++, Index++)
+        {
+            CodePoint = (CodePoint << 6) | (static_cast<unsigned char>(Text[Index]) & 0x3F);
+        }
+        Folded.push_back(CodePoint < 128 ? static_cast<uint32_t>(std::tolower(static_cast<int>(CodePoint))) : CodePoint);
+    }
+    return Folded;
+}
+
+void Terminal::MatchColumns(const std::vector<Cell>& Cells, const std::vector<uint32_t>& Query, std::vector<int>& OutColumns)
+{
+    OutColumns.clear();
+    const int CellCount = static_cast<int>(Cells.size());
+    const int Length = static_cast<int>(Query.size());
+    if (Length == 0)
+    {
+        return;
+    }
+    for (int Start = 0; Start + Length <= CellCount;)
+    {
+        bool Matches = true;
+        for (int Offset = 0; Offset < Length; Offset++)
+        {
+            const uint32_t Ch = Cells[static_cast<size_t>(Start + Offset)].Ch;
+            uint32_t Folded = Ch;
+            if (Ch == 0)
+            {
+                Folded = ' ';
+            }
+            else if (Ch < 128)
+            {
+                Folded = static_cast<uint32_t>(std::tolower(static_cast<int>(Ch)));
+            }
+            if (Folded != Query[static_cast<size_t>(Offset)])
+            {
+                Matches = false;
+                break;
+            }
+        }
+        if (Matches == false)
+        {
+            Start++;
+            continue;
+        }
+        OutColumns.push_back(Start);
+        Start++;
+    }
+}
+
+bool Terminal::Find(const std::vector<uint32_t>& Query, int FromRow, int FromCol, bool Forward, int& OutRow, int& OutCol) const
+{
+    if (Query.empty() == true)
+    {
+        return false;
+    }
+    const int TotalRows = ScrollbackSize() + Rows_;
+    const int StartRow = std::clamp(FromRow, 0, TotalRows - 1);
+    std::vector<Cell> RowCells(static_cast<size_t>(Cols_));
+    std::vector<int> Columns;
+    for (int Step = 0; Step <= TotalRows; Step++)
+    {
+        const int Offset = Forward ? Step : -Step;
+        const int Row = ((StartRow + Offset) % TotalRows + TotalRows) % TotalRows;
+        for (int Col = 0; Col < Cols_; Col++)
+        {
+            RowCells[static_cast<size_t>(Col)] = GetCell(Row, Col);
+        }
+        MatchColumns(RowCells, Query, Columns);
+        const int ColumnCount = static_cast<int>(Columns.size());
+        for (int Index = 0; Index < ColumnCount; Index++)
+        {
+            const int Column = Columns[static_cast<size_t>(Forward ? Index : ColumnCount - 1 - Index)];
+            bool Accept = true;
+            if (Step == 0)
+            {
+                Accept = Forward ? Column > FromCol : Column < FromCol;
+            }
+            else if (Step == TotalRows)
+            {
+                Accept = Forward ? Column <= FromCol : Column >= FromCol;
+            }
+            if (Accept == false)
+            {
+                continue;
+            }
+            OutRow = Row;
+            OutCol = Column;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Terminal::FindInputText(int& FirstRow, int& FirstCol, int& LastRow, int& LastCol) const
+{
+    const int ScreenTop = ScrollbackSize();
+    std::vector<int> RuleRows;
+    for (int Row = Rows_ - 1; Row >= 0 && RuleRows.size() < 2; Row--)
+    {
+        int RuleCells = 0;
+        int FilledCells = 0;
+        for (int Col = 0; Col < Cols_; Col++)
+        {
+            const uint32_t Ch = GetCell(ScreenTop + Row, Col).Ch;
+            if (Ch == 0 || Ch == ' ')
+            {
+                continue;
+            }
+            FilledCells++;
+            if (Ch == 0x2500 || Ch == 0x2501 || Ch == 0x256D || Ch == 0x256E || Ch == 0x2570 || Ch == 0x256F)
+            {
+                RuleCells++;
+            }
+        }
+        if (FilledCells > 0 && RuleCells * 10 >= FilledCells * 9 && RuleCells >= Cols_ / 2)
+        {
+            RuleRows.push_back(Row);
+        }
+    }
+    if (RuleRows.size() < 2 || RuleRows[0] - RuleRows[1] < 2 || RuleRows[0] - RuleRows[1] > 14)
+    {
+        return false;
+    }
+
+    bool Found = false;
+    for (int Row = RuleRows[1] + 1; Row < RuleRows[0]; Row++)
+    {
+        int Start = 0;
+        while (Start < Cols_)
+        {
+            const uint32_t Ch = GetCell(ScreenTop + Row, Start).Ch;
+            if (Ch != ' ' && Ch != 0 && Ch != 0x2502)
+            {
+                break;
+            }
+            Start++;
+        }
+        const uint32_t Marker = Start < Cols_ ? GetCell(ScreenTop + Row, Start).Ch : 0;
+        if (Marker == '>' || Marker == 0x276F)
+        {
+            Start++;
+            while (Start < Cols_ && (GetCell(ScreenTop + Row, Start).Ch == ' ' || GetCell(ScreenTop + Row, Start).Ch == 0))
+            {
+                Start++;
+            }
+        }
+        int End = Cols_ - 1;
+        while (End >= Start)
+        {
+            const uint32_t Ch = GetCell(ScreenTop + Row, End).Ch;
+            if (Ch != ' ' && Ch != 0 && Ch != 0x2502)
+            {
+                break;
+            }
+            End--;
+        }
+        if (End < Start)
+        {
+            continue;
+        }
+        if (Found == false)
+        {
+            FirstRow = ScreenTop + Row;
+            FirstCol = Start;
+            Found = true;
+        }
+        LastRow = ScreenTop + Row;
+        LastCol = End;
+    }
+    return Found;
+}
+
+void Terminal::GetCursor(int& Row, int& Col, bool& Visible) const
+{
+    VTermPos Pos;
+    vterm_state_get_cursorpos(vterm_obtain_state(Vt_), &Pos);
+    Row = Pos.row;
+    Col = Pos.col;
+    Visible = CursorVisible_;
+}
+
+std::string Terminal::GetText(int Row0, int Col0, int Row1, int Col1) const
+{
+    std::string Out;
+    for (int Row = Row0; Row <= Row1; Row++)
+    {
+        int const StartCol = Row == Row0 ? Col0 : 0;
+        int const EndCol = Row == Row1 ? Col1 : Cols_ - 1;
+        std::string Line;
+        for (int Col = StartCol; Col <= EndCol; Col++)
+        {
+            Cell const Current = GetCell(Row, Col);
+            if (Current.Ch == Cell::CONTINUATION)
+            {
+                continue;
+            }
+            Line += Current.Ch != 0 ? Util::Utf8(Current.Ch) : " ";
+        }
+        while (Line.empty() == false && Line.back() == ' ')
+        {
+            Line.pop_back();
+        }
+        Out += Line;
+        if (Row != Row1)
+        {
+            Out += '\n';
+        }
+    }
+    return Out;
+}
+
+std::string Terminal::GetScreenText() const
+{
+    int const Base = (int)Scrollback_.size();
+    return GetText(Base, 0, Base + Rows_ - 1, Cols_ - 1);
 }
 
 // ---- libvterm callbacks ------------------------------------------------------
 
-void Terminal::outCb(const char* s, size_t len, void* user) {
-  auto* t = static_cast<Terminal*>(user);
-  if (t->out_) t->out_(s, len);
+void Terminal::OutCallback(const char* Text, size_t Length, void* User)
+{
+    Terminal* const Self = static_cast<Terminal*>(User);
+    if (Self->Out_)
+    {
+        Self->Out_(Text, Length);
+    }
 }
 
-int Terminal::sbPush(int cols, const VTermScreenCell* cells, void* user) {
-  auto* t = static_cast<Terminal*>(user);
-  std::vector<Cell> line((size_t)cols);
-  for (int i = 0; i < cols; i++) line[(size_t)i] = t->convert(cells[i]);
-  t->sb_.push_back(std::move(line));
-  t->pushed_++;
-  if (t->sb_.size() > kMaxScrollback) {
-    t->sb_.pop_front();
-    t->dropped_++;
-  }
-  return 1;
+int Terminal::ScrollbackPush(int Cols, const VTermScreenCell* Cells, void* User)
+{
+    Terminal* const Self = static_cast<Terminal*>(User);
+    std::vector<Cell> Line((size_t)Cols);
+    size_t UsedCols = 0;
+    for (int Index = 0; Index < Cols; Index++)
+    {
+        const Cell Converted = Self->ConvertCell(Cells[Index]);
+        Line[(size_t)Index] = Converted;
+        const bool IsBlank = (Converted.Ch == 0 || Converted.Ch == ' ') && Converted.DefBg == true && Converted.Underline == false &&
+                             Converted.Strike == false;
+        if (IsBlank == false)
+        {
+            UsedCols = (size_t)Index + 1;
+        }
+    }
+    Line.resize(UsedCols);
+    Line.shrink_to_fit();
+    Self->Scrollback_.push_back(std::move(Line));
+    Self->Pushed_++;
+    if (Self->Scrollback_.size() > MAX_SCROLLBACK)
+    {
+        Self->Scrollback_.pop_front();
+        Self->Dropped_++;
+    }
+    return 1;
 }
 
-int Terminal::sbPop(int cols, VTermScreenCell* cells, void* user) {
-  auto* t = static_cast<Terminal*>(user);
-  if (t->sb_.empty()) return 0;
-  std::vector<Cell> line = std::move(t->sb_.back());
-  t->sb_.pop_back();
-  t->pushed_--;
-  for (int i = 0; i < cols; i++) {
-    VTermScreenCell& vc = cells[i];
-    std::memset(&vc, 0, sizeof vc);
-    Cell c = i < (int)line.size() ? line[(size_t)i] : Cell{};
-    if (c.ch == Cell::kContinuation) vc.chars[0] = (uint32_t)-1;
-    else vc.chars[0] = c.ch;
-    vc.width = (char)c.width;
-    setRgb(vc.fg, c.fg);
-    setRgb(vc.bg, c.bg);
-    if (c.defBg) vc.bg.type |= VTERM_COLOR_DEFAULT_BG;
-    vc.attrs.bold = c.bold;
-    vc.attrs.italic = c.italic;
-    vc.attrs.underline = c.underline ? 1 : 0;
-    vc.attrs.strike = c.strike;
-  }
-  return 1;
+int Terminal::ScrollbackPop(int Cols, VTermScreenCell* Cells, void* User)
+{
+    Terminal* const Self = static_cast<Terminal*>(User);
+    if (Self->Scrollback_.empty())
+    {
+        return 0;
+    }
+    std::vector<Cell> Line = std::move(Self->Scrollback_.back());
+    Self->Scrollback_.pop_back();
+    Self->Pushed_--;
+    for (int Index = 0; Index < Cols; Index++)
+    {
+        VTermScreenCell& ScreenCell = Cells[Index];
+        std::memset(&ScreenCell, 0, sizeof ScreenCell);
+        Cell const Source = Index < (int)Line.size() ? Line[(size_t)Index] : Cell{};
+        if (Source.Ch == Cell::CONTINUATION)
+        {
+            ScreenCell.chars[0] = (uint32_t)-1;
+        }
+        else
+        {
+            ScreenCell.chars[0] = Source.Ch;
+        }
+        ScreenCell.width = (char)Source.Width;
+        SetRgb(ScreenCell.fg, Source.Fg);
+        SetRgb(ScreenCell.bg, Source.Bg);
+        if (Source.DefBg)
+        {
+            ScreenCell.bg.type |= VTERM_COLOR_DEFAULT_BG;
+        }
+        ScreenCell.attrs.bold = Source.Bold;
+        ScreenCell.attrs.italic = Source.Italic;
+        ScreenCell.attrs.underline = Source.Underline ? 1 : 0;
+        ScreenCell.attrs.strike = Source.Strike;
+    }
+    return 1;
 }
 
-int Terminal::sbClear(void* user) {
-  auto* t = static_cast<Terminal*>(user);
-  t->dropped_ += (long long)t->sb_.size();
-  t->sb_.clear();
-  return 1;
+int Terminal::ScrollbackClear(void* User)
+{
+    Terminal* const Self = static_cast<Terminal*>(User);
+    Self->Dropped_ += (long long)Self->Scrollback_.size();
+    Self->Scrollback_.clear();
+    return 1;
 }
 
-int Terminal::setProp(VTermProp prop, VTermValue* val, void* user) {
-  auto* t = static_cast<Terminal*>(user);
-  switch (prop) {
-    case VTERM_PROP_CURSORVISIBLE: t->cursorVisible_ = val->boolean != 0; break;
-    case VTERM_PROP_ALTSCREEN: t->alt_ = val->boolean != 0; break;
-    case VTERM_PROP_MOUSE: t->mouseMode_ = val->number; break;
-    default: break;
-  }
-  return 1;
+int Terminal::SetProp(VTermProp Prop, VTermValue* Value, void* User)
+{
+    Terminal* const Self = static_cast<Terminal*>(User);
+    switch (Prop)
+    {
+        case VTERM_PROP_CURSORVISIBLE:
+            Self->CursorVisible_ = Value->boolean != 0;
+            break;
+        case VTERM_PROP_ALTSCREEN:
+            Self->Alt_ = Value->boolean != 0;
+            break;
+        case VTERM_PROP_MOUSE:
+            Self->MouseMode_ = Value->number;
+            break;
+        default:
+            break;
+    }
+    return 1;
 }
 
-int Terminal::onResize(int, int, void*) { return 1; }
+int Terminal::OnResize(int, int, void*)
+{
+    return 1;
+}

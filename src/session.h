@@ -11,54 +11,89 @@
 enum class Status { Starting, Busy, Waiting, Idle, Exited };
 
 // A Claude CLI process + its terminal, plus the activity detection behind the status dots.
-class Session {
- public:
-  using StatusFn = std::function<void(Session&, Status oldStatus, Status newStatus, double busySeconds)>;
-  static std::function<void()> wake;  // wakes the UI loop from reader threads
+class Session
+{
+public:
+    using StatusFn = std::function<void(Session&, Status OldStatus, Status NewStatus, double BusySeconds)>;
+    static std::function<void()> Wake;  // wakes the UI loop from reader threads
+    static const char* StatusName(Status CurrentStatus);
 
-  explicit Session(SessionRec r) : rec(std::move(r)) {}
-  ~Session();
+    explicit Session(SessionRec CurrentRec) : Rec(std::move(CurrentRec)) {}
+    ~Session();
 
-  SessionRec rec;
-  Status status = Status::Exited;
-  bool unseen = false;      // finished / needs input while you were looking elsewhere
-  bool attempted = false;   // auto-start already tried this run
-  std::unique_ptr<Terminal> term;
+    SessionRec Rec;
+    Status CurrentStatus = Status::Exited;
+    bool Unseen = false;     // finished / needs input while you were looking elsewhere
+    bool Attempted = false;  // auto-start already tried this run
+    std::unique_ptr<Terminal> Term;
 
-  // per-view state owned by the UI
-  int scrollOffset = 0;
-  long long lastPushed = 0;
-  bool selecting = false, hasSel = false;
-  long long selA_row = 0, selB_row = 0;
-  int selA_col = 0, selB_col = 0;
+    // per-view state owned by the UI
+    int ScrollOffset = 0;
+    long long LastPushed = 0;
+    bool Selecting = false, HasSelection = false;
+    long long SelectionStartRow = 0, SelectionEndRow = 0;
+    int SelectionStartCol = 0, SelectionEndCol = 0;
 
-  bool running() const { return pty_ != nullptr && !exited_; }
-  bool start(const std::string& command, int cols, int rows, double now, std::string& err);
-  void kill(double now, const StatusFn& cb);
-  void tick(double now, const StatusFn& cb);       // drain output, run timers
-  void input(const char* data, size_t n, double now, const StatusFn& cb);  // user keystrokes / paste
-  void resize(int cols, int rows);
-  // Runs f with the terminal so bytes it emits (keys, mouse, paste markers) count as user input.
-  void typing(double now, const StatusFn& cb, const std::function<void(Terminal&)>& f);
-  void sendText(const std::string& s, double now, const StatusFn& cb) { input(s.data(), s.size(), now, cb); }
+    bool InputSelected = false;  // the current selection is the whole prompt text (Ctrl+A), so edits act on it
+    bool FindOpen = false, FindFocus = false, FindHasMatch = false, FindNoMatch = false;
+    long long FindStableRow = 0;
+    int FindCol = 0;
+    char FindBuffer[256] = "";
 
- private:
-  bool spawn(const std::string& command, int cols, int rows, bool resume, double now, std::string& err);
-  void setStatus(Status s, double busy, const StatusFn& cb);
-  void settle(double now, const StatusFn& cb);
-  void writeRaw(const char* d, size_t n);
+    bool IsRunning() const { return Pty_ != nullptr && Exited_ == false; }
+    // Needs your attention: waiting on a prompt right now, or finished while you weren't looking.
+    // Waiting is OR'd in explicitly because Unseen clears on focus even while still Waiting.
+    bool RequiresAction() const { return CurrentStatus == Status::Waiting || (CurrentStatus == Status::Idle && Unseen); }
+    bool Start(const std::string& Command, int Cols, int Rows, double Now, std::string& Err);
+    void Kill(double Now, const StatusFn& Callback);
+    void Tick(double Now, const StatusFn& Callback);                       // drain output, run timers
+    void Input(const char* Data, size_t Length, double Now, const StatusFn& Callback);  // user keystrokes / paste
+    void Resize(int Cols, int Rows);
+    // Applies a new size only once it has stayed the same for RESIZE_SETTLE_SECONDS, so transient layout sizes
+    // (window drags, mode switches, minimize) never reach the program and make it re-wrap its output narrow.
+    void RequestResize(const int NewCols, const int NewRows, const double Now)
+    {
+        if (NewCols == Cols_ && NewRows == Rows_)
+        {
+            PendingCols_ = 0;
+            return;
+        }
+        if (NewCols != PendingCols_ || NewRows != PendingRows_)
+        {
+            PendingCols_ = NewCols;
+            PendingRows_ = NewRows;
+            PendingSince_ = Now;
+            return;
+        }
+        if (Now - PendingSince_ >= RESIZE_SETTLE_SECONDS)
+        {
+            PendingCols_ = 0;
+            Resize(NewCols, NewRows);
+        }
+    }
+    // Runs action with the terminal so bytes it emits (keys, mouse, paste markers) count as user input.
+    void Typing(double Now, const StatusFn& Callback, const std::function<void(Terminal&)>& Action);
+    void SendText(const std::string& Text, double Now, const StatusFn& Callback) { Input(Text.data(), Text.size(), Now, Callback); }
 
-  std::unique_ptr<Pty> pty_;
-  std::mutex mu_;
-  std::string pending_;
-  bool exited_ = false;
-  int exitCode_ = 0;
-  bool resumeMode_ = false;
-  double startedAt_ = 0, firstBurst_ = 0, lastInput_ = -10, idleAt_ = 0;
-  const StatusFn* typingCb_ = nullptr;
-  double typingNow_ = 0;
-  std::string command_;
-  int cols_ = 80, rows_ = 24;
+private:
+    bool Spawn(const std::string& Command, int Cols, int Rows, bool Resume, double Now, std::string& Err);
+    void SetStatus(Status CurrentStatus, double BusySeconds, const StatusFn& Callback);
+    void Settle(double Now, const StatusFn& Callback);
+    void WriteRaw(const char* Data, size_t Length);
+    static bool LooksLikeWaiting(const std::string& Screen);
+
+    std::unique_ptr<Pty> Pty_;
+    std::mutex Mutex_;
+    std::string Pending_;
+    bool Exited_ = false;
+    int ExitCode_ = 0;
+    bool ResumeMode_ = false;
+    double StartedAt_ = 0, FirstBurst_ = 0, LastInput_ = -10, IdleAt_ = 0;
+    const StatusFn* TypingCallback_ = nullptr;
+    double TypingNow_ = 0;
+    std::string Command_;
+    int Cols_ = 80, Rows_ = 24;
+    int PendingCols_ = 0, PendingRows_ = 0;
+    double PendingSince_ = 0;
+    static constexpr double RESIZE_SETTLE_SECONDS = 0.3;
 };
-
-const char* statusName(Status s);
