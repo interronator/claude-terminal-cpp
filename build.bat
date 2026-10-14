@@ -23,7 +23,7 @@ if errorlevel 1 goto :nogit
 if "%CLEAN%"=="1" if exist build rmdir /s /q build
 
 echo [1/3] Configuring...
-cmake -S . -B build
+cmake -S . -B build -Wno-dev
 if errorlevel 1 goto :cfgfail
 
 echo.
@@ -36,11 +36,11 @@ echo [3/3] Copying executable...
 set EXE=build\claude-terminal.exe
 if exist "build\Release\claude-terminal.exe" set EXE=build\Release\claude-terminal.exe
 if not exist "%EXE%" goto :noexe
-if not exist dist mkdir dist
-copy /y "%EXE%" "dist\claude-terminal.exe" >nul
+if not exist Binaries mkdir Binaries
+copy /y "%EXE%" "Binaries\claude-terminal.exe" >nul
 echo.
-echo SUCCESS: %CD%\dist\claude-terminal.exe
-if "%RUN%"=="1" start "" "dist\claude-terminal.exe"
+echo SUCCESS: %CD%\Binaries\claude-terminal.exe
+if "%RUN%"=="1" start "" "Binaries\claude-terminal.exe"
 goto :done
 
 :nocmake

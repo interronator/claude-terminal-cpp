@@ -14,7 +14,7 @@ No accounts or settings are bundled with the app; everything is per user (see Co
 
 Prerequisites: Git, CMake 3.20+, and Visual Studio 2022 Build Tools (MSVC) or MinGW-w64. Dependencies (GLFW, Dear ImGui, libvterm, nlohmann/json) are fetched automatically by CMake.
 
-Double-click or run `build.bat` (options: `build.bat clean`, `build.bat run`). The result is `dist\claude-terminal.exe`.
+Double-click or run `build.bat` (options: `build.bat clean`, `build.bat run`). The result is `Binaries\claude-terminal.exe`.
 
 Or manually:
 ```
@@ -50,7 +50,7 @@ Inferred from output: sustained output = busy; after ~2s silence, the bottom of 
 - `src/` C++ sources. `app.cpp` is the UI, `session.cpp` status and lifecycle, `terminal.cpp` the libvterm wrapper, `pty_win.cpp` / `pty_posix.cpp` the PTY backends, `git.cpp` worktrees, `store.cpp` JSON state. Most other logic lives in header-only classes (`*.h`).
 - `resources/` Windows icon and resource script.
 - `scripts/` developer tooling (`check-bool-style.ps1` flags raw `!` negation).
-- `build.bat` builds and copies the exe to `dist/`. `build/` and `dist/` are generated and git-ignored.
+- `build.bat` builds and copies the exe to `Binaries/`. `build/` and `Binaries/` are generated and git-ignored.
 
 ## Testing status
 Developed and tested on Windows with MSVC. The POSIX PTY backend (`pty_posix.cpp`) is less exercised.
