@@ -39,7 +39,10 @@ Alt+1…9 focus pane; Ctrl+Shift+N new session; Ctrl+Shift+M maximize; Ctrl+Shif
 Inferred from output: sustained output = busy; after ~2s silence, the bottom of the screen is matched against approval patterns (`Do you want to`, `Esc to cancel`, `❯ 1. Yes`…). Adjust the patterns in `src/session.cpp` if Claude Code's prompts change.
 
 ## Layout
-`src/app.cpp` UI · `session.cpp` status/lifecycle · `terminal.cpp` libvterm wrapper · `pty_win.cpp` / `pty_posix.cpp` PTY backends · `git.cpp` worktrees · `store.cpp` JSON state.
+- `src/` C++ sources. `app.cpp` is the UI, `session.cpp` status and lifecycle, `terminal.cpp` the libvterm wrapper, `pty_win.cpp` / `pty_posix.cpp` the PTY backends, `git.cpp` worktrees, `store.cpp` JSON state. Most other logic lives in header-only classes (`*.h`).
+- `resources/` Windows icon and resource script.
+- `scripts/` developer tooling (`check-bool-style.ps1` flags raw `!` negation).
+- `build.bat` builds and copies the exe to `dist/`. `build/` and `dist/` are generated and git-ignored.
 
 ## Testing status
-Developed and interactively tested on Linux (Xvfb, fake and scripted sessions). The Windows build cross-compiles cleanly with MinGW-w64, but ConPTY, notifications and the folder picker have not been run on real Windows yet.
+Developed and tested on Windows with MSVC. The POSIX PTY backend (`pty_posix.cpp`) is less exercised.
