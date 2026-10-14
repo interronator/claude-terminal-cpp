@@ -26,6 +26,32 @@ bool Platform::CanPickFolder()
 
 void Platform::RunScripts(const std::string&, const std::string&) {}
 
+bool Platform::IsOnPath(const std::string& Program)
+{
+    const char* const PathVariable = std::getenv("PATH");
+    if (PathVariable == nullptr)
+    {
+        return false;
+    }
+    const std::string Paths = PathVariable;
+    size_t Start = 0;
+    while (Start <= Paths.size())
+    {
+        size_t End = Paths.find(':', Start);
+        if (End == std::string::npos)
+        {
+            End = Paths.size();
+        }
+        const std::string Candidate = Paths.substr(Start, End - Start) + "/" + Program;
+        if (access(Candidate.c_str(), X_OK) == 0)
+        {
+            return true;
+        }
+        Start = End + 1;
+    }
+    return false;
+}
+
 void Platform::Reveal(const std::string& path)
 {
     Git::RunProcess({"xdg-open", path}, "");

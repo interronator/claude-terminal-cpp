@@ -27,6 +27,7 @@ public:
     static void RunScripts(const std::string& Dir, const std::string& Command);  // run in a console window
     static void Reveal(const std::string& Path);                                                  // open in file manager
     static bool CanPickFolder();
+    static bool IsOnPath(const std::string& Program);  // true if a program with this name resolves on PATH
     static void Shutdown(GLFWwindow* CurrentWindow);
 
     // True if the OS clipboard currently holds image data (e.g. a Snipping Tool / Win+Shift+S capture)

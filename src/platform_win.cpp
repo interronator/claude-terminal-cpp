@@ -107,6 +107,19 @@ void Platform::RunScripts(const std::string& Dir, const std::string& Command)
     ShellExecuteW(nullptr, L"open", L"cmd.exe", Params.c_str(), WinStrings::Widen(Dir).c_str(), SW_SHOWNORMAL);
 }
 
+bool Platform::IsOnPath(const std::string& Program)
+{
+    const std::wstring Name = WinStrings::Widen(Program);
+    for (const wchar_t* const Extension : {L".exe", L".cmd", L".bat", L".com"})
+    {
+        if (SearchPathW(nullptr, Name.c_str(), Extension, 0, nullptr, nullptr) != 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void Platform::Reveal(const std::string& Path)
 {
     ShellExecuteW(nullptr, L"open", WinStrings::Widen(Path).c_str(), nullptr, nullptr, SW_SHOWNORMAL);

@@ -2,6 +2,14 @@
 
 A native desktop app for running many Claude Code sessions across many projects. Each session is a real `claude` CLI in its own pseudo-terminal (Windows ConPTY). Written in C++17 with Dear ImGui, GLFW/OpenGL3 and libvterm; produces a single `.exe`.
 
+## Getting started
+
+1. Install the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`) so `claude` is on your PATH. If it is missing, the app tells you when you start a session.
+2. Run the app and start a session. The first time, Claude Code asks you to sign in inside the terminal pane. Follow its prompts; this app never sees your credentials.
+3. Optional, for the Git panel: install the [GitHub CLI](https://cli.github.com) (`gh`), then use **Sign in with GitHub** in the app. It shows a one-time code to enter on github.com, and `gh` keeps the login.
+
+No accounts or settings are bundled with the app; everything is per user (see Configuration).
+
 ## Build (Windows)
 
 Prerequisites: Git, CMake 3.20+, and Visual Studio 2022 Build Tools (MSVC) or MinGW-w64. Dependencies (GLFW, Dear ImGui, libvterm, nlohmann/json) are fetched automatically by CMake.
