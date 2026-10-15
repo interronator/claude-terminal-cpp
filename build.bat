@@ -20,6 +20,12 @@ if errorlevel 1 goto :nocmake
 where git >nul 2>&1
 if errorlevel 1 goto :nogit
 
+set VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe
+if not exist "%VSWHERE%" goto :novs
+set VSFOUND=
+for /f "usebackq delims=" %%P in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSFOUND=%%P
+if "%VSFOUND%"=="" goto :novs
+
 if "%CLEAN%"=="1" if exist build rmdir /s /q build
 
 echo [1/3] Configuring...
@@ -51,9 +57,16 @@ goto :done
 echo [error] Git was not found on PATH. It is needed to download dependencies.
 echo         Install from https://git-scm.com/download/win
 goto :done
+:novs
+echo [error] No C++ compiler found. Install "Build Tools for Visual Studio 2022"
+echo         from https://visualstudio.microsoft.com/downloads/ (scroll to "Tools
+echo         for Visual Studio") and tick the "Desktop development with C++" workload.
+echo         Then run:  build.bat clean
+goto :done
 :cfgfail
 echo [error] CMake configure failed. Make sure Visual Studio 2022 (or Build Tools)
 echo         is installed with the "Desktop development with C++" workload.
+echo         If you just installed it, run:  build.bat clean
 goto :done
 :buildfail
 echo [error] Build failed. See the messages above.
