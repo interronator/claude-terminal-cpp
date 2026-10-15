@@ -2147,7 +2147,7 @@ void App::DrawSidebar(float Width)
 
     const float FooterHeight = ImGui::GetTextLineHeightWithSpacing() * 3.2f + ImGui::GetFrameHeightWithSpacing();
     const float ArchiveHeight = State_.Ui.ArchiveOpen == true ? 170.0f * Scale : ImGui::GetFrameHeightWithSpacing() + 6.0f * Scale;
-    ImGui::BeginChild("##tree", ImVec2(0, -(FooterHeight + ArchiveHeight + ImGui::GetStyle().ItemSpacing.y)), ImGuiChildFlags_None);
+    ImGui::BeginChild("##tree", ImVec2(0, -(FooterHeight + ArchiveHeight + ImGui::GetStyle().ItemSpacing.y)), ImGuiChildFlags_None, ImGuiWindowFlags_AlwaysVerticalScrollbar);
     if (State_.Projects.empty())
     {
         ImGui::TextDisabled("No projects yet.");
@@ -2435,7 +2435,7 @@ void App::DrawSidebar(float Width)
     }
     ImGui::EndChild();
 
-    ImGui::BeginChild("##archive", ImVec2(0, ArchiveHeight), ImGuiChildFlags_None);
+    ImGui::BeginChild("##archive", ImVec2(0, ArchiveHeight), ImGuiChildFlags_None, ImGuiWindowFlags_AlwaysVerticalScrollbar);
     ImGui::SetNextItemOpen(State_.Ui.ArchiveOpen, ImGuiCond_Always);
     const std::string ArchiveLabel = "Archive (" + std::to_string(State_.Archive.size()) + ")";
     const bool ArchiveExpanded = ImGui::TreeNodeEx(ArchiveLabel.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_FramePadding);
