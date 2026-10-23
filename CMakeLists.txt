@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(ClaudeTerminal LANGUAGES C CXX)
+project(ClaudeTerminal VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -59,6 +59,7 @@ else()
 endif()
 
 add_executable(claude-terminal ${APP_SOURCES})
+target_compile_definitions(claude-terminal PRIVATE CLAUDE_TERMINAL_VERSION="${PROJECT_VERSION}")
 target_include_directories(claude-terminal PRIVATE src ${stb_SOURCE_DIR})
 target_link_libraries(claude-terminal PRIVATE imgui vterm nlohmann_json::nlohmann_json OpenGL::GL)
 
@@ -66,6 +67,9 @@ if(WIN32)
   target_compile_definitions(claude-terminal PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
   target_link_libraries(claude-terminal PRIVATE user32 shell32 ole32 shlwapi dwmapi winhttp)
   if(MSVC)
+    # The standard getenv/sscanf/fopen calls are used on purpose so the code stays portable; silence MSVC's
+    # "use the _s version" deprecation noise.
+    target_compile_definitions(claude-terminal PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_options(claude-terminal PRIVATE /utf-8 /W3)
     target_link_options(claude-terminal PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
   else()

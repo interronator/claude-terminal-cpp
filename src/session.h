@@ -1,4 +1,5 @@
 #pragma once
+#include <ctime>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -26,6 +27,10 @@ public:
     bool Unseen = false;     // finished / needs input while you were looking elsewhere
     bool Attempted = false;  // auto-start already tried this run
     std::unique_ptr<Terminal> Term;
+    std::string PendingPrompt;  // sent once Claude has finished starting up
+    std::string ExtraGuidance;  // appended to the system prompt on launch
+    std::time_t LaunchedAt = 0;  // wall-clock time the current Claude process started
+    int BackgroundTasks = 0;     // background shells and monitors still running, from the transcript
 
     // per-view state owned by the UI
     int ScrollOffset = 0;
@@ -43,7 +48,9 @@ public:
     bool IsRunning() const { return Pty_ != nullptr && Exited_ == false; }
     // Needs your attention: waiting on a prompt right now, or finished while you weren't looking.
     // Waiting is OR'd in explicitly because Unseen clears on focus even while still Waiting.
-    bool RequiresAction() const { return CurrentStatus == Status::Waiting || (CurrentStatus == Status::Idle && Unseen); }
+    bool RequiresAction() const { return CurrentStatus == Status::Waiting || (CurrentStatus == Status::Idle && Unseen && InBackground() == false); }
+    // Claude's turn ended but background shells or monitors are still running, and it will pick up again when they report.
+    bool InBackground() const { return CurrentStatus == Status::Idle && BackgroundTasks > 0; }
     bool Start(const std::string& Command, int Cols, int Rows, double Now, std::string& Err);
     void Kill(double Now, const StatusFn& Callback);
     void Tick(double Now, const StatusFn& Callback);                       // drain output, run timers

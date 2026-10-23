@@ -103,7 +103,10 @@ bool Session::Spawn(const std::string& Command, int Cols, int Rows, bool Resume,
         Argv.push_back("claude");
     }
     Argv.push_back("--append-system-prompt");
-    Argv.push_back(BuildScripts::Guidance());
+    std::string SystemPrompt = ExtraGuidance.empty() == true ? BuildScripts::Guidance() : BuildScripts::Guidance() + " " + ExtraGuidance;
+    // Windows launches through cmd.exe, which toggles quoting at every double quote, so an embedded one exposes | < > & to the shell.
+    std::replace(SystemPrompt.begin(), SystemPrompt.end(), '"', '\'');
+    Argv.push_back(SystemPrompt);
     if (Platform::IsOnPath(Argv[0]) == false)
     {
         Err = "Claude Code CLI ('" + Argv[0] + "') was not found. Install it with: npm install -g @anthropic-ai/claude-code (see docs.claude.com/en/docs/claude-code), then restart this session. First run asks you to sign in.";
@@ -142,6 +145,8 @@ bool Session::Spawn(const std::string& Command, int Cols, int Rows, bool Resume,
         return false;
     }
     Pty_ = std::move(NewPty);
+    LaunchedAt = std::time(nullptr);
+    BackgroundTasks = 0;
     Cols_ = Cols;
     Rows_ = Rows;
     Command_ = Command;
@@ -315,12 +320,20 @@ void Session::Resize(int Cols, int Rows)
     }
     if (Term && (Cols != Cols_ || Rows != Rows_))
     {
+        const bool WidthChanged = Cols != Cols_;
         Cols_ = Cols;
         Rows_ = Rows;
         Term->Resize(Rows, Cols);
         if (Pty_)
         {
             Pty_->Resize(Cols, Rows);
+            // Ctrl+L makes Claude redraw at the new width, but it counts as a keypress: while Claude sits at its prompt
+            // it would dismiss the grey suggested reply (or poke a question), so it is only sent while Claude is working.
+            if (WidthChanged == true && IsRunning() == true && CurrentStatus == Status::Busy)
+            {
+                const char FormFeed = '\x0C';
+                Pty_->Write(&FormFeed, 1);
+            }
         }
     }
 }

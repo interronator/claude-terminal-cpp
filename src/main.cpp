@@ -29,7 +29,7 @@ int main(int, char**)
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
-    GLFWwindow* const Window = glfwCreateWindow(1500, 900, "Claude Terminal", nullptr, nullptr);
+    GLFWwindow* const Window = glfwCreateWindow(1500, 900, "Claude Terminal " CLAUDE_TERMINAL_VERSION, nullptr, nullptr);
     if (Window == nullptr)
     {
         std::fprintf(stderr, "Could not create an OpenGL 3.3 window.\n");

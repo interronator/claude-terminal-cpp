@@ -43,6 +43,77 @@ public:
     }
 
     static constexpr const char* SHOT_DIRECTORY_NAME = "ClaudeShots";
+    static constexpr const char* TAG_PREFIX = "cs-";
+    static constexpr size_t TAG_HEX_LENGTH = 8;
+
+    // Short id that marks a session's screenshots ("cs-1a2b3c4d"), taken from the app's session id.
+    static std::string SessionTag(const std::string& SessionId)
+    {
+        std::string Hex;
+        for (const char Character : SessionId)
+        {
+            if (std::isxdigit(static_cast<unsigned char>(Character)) == 0)
+            {
+                continue;
+            }
+            Hex += static_cast<char>(std::tolower(static_cast<unsigned char>(Character)));
+            if (Hex.size() == TAG_HEX_LENGTH)
+            {
+                break;
+            }
+        }
+        return Hex.size() == TAG_HEX_LENGTH ? TAG_PREFIX + Hex : std::string();
+    }
+
+    // The session's own folder: <project>/ClaudeShots/<tag>.
+    static std::filesystem::path SessionShotDirectory(const std::string& ProjectDir, const std::string& Tag)
+    {
+        return std::filesystem::path(ProjectDir) / SHOT_DIRECTORY_NAME / Tag;
+    }
+
+    // The last session tag appearing in a path (folder or file name), or empty.
+    static std::string TagIn(const std::string& Path)
+    {
+        std::string Lower = Path;
+        std::transform(Lower.begin(), Lower.end(), Lower.begin(), [](const unsigned char Character) { return static_cast<char>(std::tolower(Character)); });
+        const std::string Prefix = TAG_PREFIX;
+        std::string Found;
+        size_t Position = 0;
+        while ((Position = Lower.find(Prefix, Position)) != std::string::npos)
+        {
+            const size_t HexStart = Position + Prefix.size();
+            Position = HexStart;
+            if (HexStart + TAG_HEX_LENGTH > Lower.size())
+            {
+                break;
+            }
+            const std::string Hex = Lower.substr(HexStart, TAG_HEX_LENGTH);
+            const bool AllHex = std::all_of(Hex.begin(), Hex.end(), [](const unsigned char Character) { return std::isxdigit(Character) != 0; });
+            const size_t After = HexStart + TAG_HEX_LENGTH;
+            const bool EndsTag = After == Lower.size() || std::isxdigit(static_cast<unsigned char>(Lower[After])) == 0;
+            if (AllHex == true && EndsTag == true)
+            {
+                Found = Prefix + Hex;
+            }
+        }
+        return Found;
+    }
+
+    // Live-view frames (<tag>_live.png) are overwritten every second, so they stay out of the screenshot feed.
+    static bool IsLiveFrame(const std::string& Path)
+    {
+        const std::string Stem = std::filesystem::path(Path).stem().string();
+        return EndsWith(Stem, "_live") == true || EndsWith(Stem, "_live_pending") == true;
+    }
+
+    static std::string Guidance(const std::string& ProjectDir, const std::string& Tag)
+    {
+        const std::string Directory = SessionShotDirectory(ProjectDir, Tag).string();
+        return "Screenshots: this session's tag is " + Tag + ". Save every screenshot or image you capture or render to " + Directory +
+               " (create the folder if needed) and start each file name with the tag, e.g. " + Tag + "_main-menu.png. If a tool saves an image "
+               "somewhere else, copy it into that folder with the tagged name. When you mention a screenshot, give its full path. Never put "
+               "another session's tag in your file names.";
+    }
 
     // Finds paths in the text that end at a directory named ClaudeShots (including ones that only prefix a file path).
     static std::vector<std::string> ExtractShotDirectories(const std::string& Text)
@@ -91,6 +162,11 @@ public:
     }
 
 private:
+    static bool EndsWith(const std::string& Text, const std::string& Suffix)
+    {
+        return Text.size() >= Suffix.size() && Text.compare(Text.size() - Suffix.size(), Suffix.size(), Suffix) == 0;
+    }
+
     static bool IsDelimiter(const char Character)
     {
         return std::isspace(static_cast<unsigned char>(Character)) != 0 || std::string("\"'`()<>[]|*,;").find(Character) != std::string::npos;

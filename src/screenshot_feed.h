@@ -19,16 +19,21 @@ public:
 
     const std::vector<Entry>& Entries() const { return Entries_; }
 
-    // A path seen again with a newer time (the file was overwritten) moves to the top instead of duplicating.
-    bool Add(const std::string& SessionId, const std::string& Path, const std::time_t Time)
+    // Each file appears once. A path seen again with a newer time (the file was overwritten) moves to the top instead of
+    // duplicating. Owned means the file carries the session's tag, which overrides whichever session reported it first.
+    bool Add(const std::string& SessionId, const std::string& Path, const std::time_t Time, const bool Owned)
     {
         for (Entry& Existing : Entries_)
         {
-            if (Existing.SessionId != SessionId || Existing.Path != Path)
+            if (Existing.Path != Path)
             {
                 continue;
             }
-            Existing.Time = Time;
+            if (Owned == true)
+            {
+                Existing.SessionId = SessionId;
+            }
+            Existing.Time = std::max(Existing.Time, Time);
             Sort();
             return false;
         }

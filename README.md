@@ -30,6 +30,11 @@ Requires Windows 10 1809+ (ConPTY) and the `claude` CLI on your PATH.
 - Add a project folder (button, or drag a folder onto the window), then **+** on a project to start a session.
 - Open sessions tile automatically; **Tabs** shows one at a time. Hide (–) keeps a session running; × in the sidebar closes it.
 - Sessions persist and resume on next launch (`claude --resume <id>`; falls back to a fresh start if resume fails).
+- **Pause all** (toolbar) types "Pause" into every session that is working; the button then becomes **Continue N**, which types "continue" into those same sessions.
+- **Log** (pane header, or right-click a project → Project log) opens the project's `PROJECT_LOG.md`. Every session is told to append a dated line to it whenever it finishes a piece of work; each line names the type of work (coding, new feature, art, sound, optimization, research, level design, …). The window groups those lines by hour, day or week, shows a **By type** pie chart for today, this week or all time, and has a **Notes** tab that sessions read when they start.
+- While a session runs a shell command, background shell or monitor for more than a few seconds, a box in the top-left of its pane shows how long it has been going, how long that command usually takes (learned from past Claude transcripts, cached in `command_durations.json` next to the app's settings) and, for background shells, their latest output line.
+- **Handoff** (pane header) asks the session to write a handoff summary to `ClaudeHandoffs/` in the project. When it's written the button becomes **Continue fresh**, which starts a new session in the same folder that reads the summary and carries on (right-click for open / redo / discard).
+- **Auto** (toolbar, next to Pause all) is for when you step away: every running session is told to keep working without stopping to ask, making sensible choices itself and skipping anything destructive. A session that finishes a turn is nudged to continue a few seconds later, until it replies `AUTO-DONE` or has been nudged 4 times in a row without real work. Turning it off tells the sessions you're back. Permission prompts are never answered for you.
 - Optional git worktree per session: branch `claude/<name>-xxxx` under `.claude/worktrees/`; on close choose keep or remove.
 
 ### Status dots
@@ -41,6 +46,7 @@ Alt+1…9 focus pane; Ctrl+Shift+N new session; Ctrl+Shift+M maximize; Ctrl+Shif
 ## Configuration
 - State: `%APPDATA%\ClaudeTerminal\state.json` (override with env `CLAUDE_TERMINAL_DATA`).
 - Claude command and font size in Settings (e.g. `claude --model opus`).
+- Layout debugging: set `CT_DEBUG_LAYOUT=1` to log layout changes (with the mouse position and hovered window) to `layout-debug.log` next to `state.json`.
 - Fonts: Segoe UI / Cascadia Mono / Consolas by default; override with `CT_FONT_UI`, `CT_FONT_MONO`, `CT_FONT_MONO_BOLD`.
 
 ## Status detection

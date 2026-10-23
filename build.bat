@@ -29,7 +29,7 @@ if "%VSFOUND%"=="" goto :novs
 if "%CLEAN%"=="1" if exist build rmdir /s /q build
 
 echo [1/3] Configuring...
-cmake -S . -B build -Wno-dev
+cmake -S . -B build -Wno-author
 if errorlevel 1 goto :cfgfail
 
 echo.
@@ -43,7 +43,9 @@ set EXE=build\claude-terminal.exe
 if exist "build\Release\claude-terminal.exe" set EXE=build\Release\claude-terminal.exe
 if not exist "%EXE%" goto :noexe
 if not exist Binaries mkdir Binaries
+taskkill /f /im claude-terminal.exe >nul 2>&1
 copy /y "%EXE%" "Binaries\claude-terminal.exe" >nul
+if errorlevel 1 goto :copyfail
 echo.
 echo SUCCESS: %CD%\Binaries\claude-terminal.exe
 if "%RUN%"=="1" start "" "Binaries\claude-terminal.exe"
@@ -70,6 +72,9 @@ echo         If you just installed it, run:  build.bat clean
 goto :done
 :buildfail
 echo [error] Build failed. See the messages above.
+goto :done
+:copyfail
+echo [error] Could not copy the executable to Binaries. Is claude-terminal.exe still running?
 goto :done
 :noexe
 echo [error] Build finished but claude-terminal.exe was not found.
