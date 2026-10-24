@@ -4,6 +4,8 @@
 #include <dwmapi.h>
 #include <winhttp.h>
 
+#include <algorithm>
+
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
@@ -123,6 +125,14 @@ bool Platform::IsOnPath(const std::string& Program)
 void Platform::Reveal(const std::string& Path)
 {
     ShellExecuteW(nullptr, L"open", WinStrings::Widen(Path).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+void Platform::ShowInFolder(const std::string& Path)
+{
+    std::wstring NativePath = WinStrings::Widen(Path);
+    std::replace(NativePath.begin(), NativePath.end(), L'/', L'\\');
+    const std::wstring Arguments = L"/select,\"" + NativePath + L"\"";
+    ShellExecuteW(nullptr, L"open", L"explorer.exe", Arguments.c_str(), nullptr, SW_SHOWNORMAL);
 }
 
 bool Platform::ClipboardHasImage()

@@ -3504,6 +3504,31 @@ void App::DrawScreenshotPanel(const float Width)
             ImGui::SetTooltip("Show every screenshot you've hidden again");
         }
         ImGui::SameLine();
+        const std::string DeleteHiddenLabel = "Delete " + std::to_string(State_.Ui.HiddenScreenshots.size()) + " hidden###shotDeleteHidden";
+        if (ImGui::SmallButton(DeleteHiddenLabel.c_str()) == true)
+        {
+            const std::vector<std::string> Paths(State_.Ui.HiddenScreenshots.begin(), State_.Ui.HiddenScreenshots.end());
+            ConfirmTitle_ = "Delete " + std::to_string(Paths.size()) + " hidden photos?";
+            ConfirmText_ = "This permanently deletes every screenshot you've hidden from disk.";
+            ConfirmYesAction_ = [this, Paths]
+            {
+                for (const std::string& Path : Paths)
+                {
+                    std::error_code ErrorCode;
+                    std::filesystem::remove(Path, ErrorCode);
+                    ScreenshotFeed_.RemovePath(Path);
+                    ShotAspects_.erase(Path);
+                    State_.Ui.HiddenScreenshots.erase(Path);
+                }
+                MarkDirty();
+            };
+            OpenModal(Modal::Confirm);
+        }
+        if (ImGui::IsItemHovered() == true)
+        {
+            ImGui::SetTooltip("Permanently delete the files of every hidden screenshot");
+        }
+        ImGui::SameLine();
     }
     if (Visible.empty() == false)
     {
@@ -3698,6 +3723,15 @@ bool App::DrawScreenshotCard(const ScreenshotFeed::Entry& Item, const float Widt
     bool DismissedSession = false;
     if (ImGui::BeginPopupContextItem("##imageMenu") == true)
     {
+        if (ImGui::MenuItem("Select this session", nullptr, false, Owner != nullptr) == true)
+        {
+            OpenSessionFromSidebar(Item.SessionId);
+        }
+        if (ImGui::MenuItem("Show in Explorer") == true)
+        {
+            Platform::ShowInFolder(Item.Path);
+        }
+        ImGui::Separator();
         if (ImGui::MenuItem("Delete all from session") == true)
         {
             DismissedSession = true;
@@ -4226,7 +4260,7 @@ void App::DrawShellActivity(const Session& CurrentSession, const ImVec2 PaneTopL
     }
 
     const float LineHeight = ImGui::GetTextLineHeight();
-    const float BarHeight = 4 * Scale;
+    const float BarHeight = 6 * Scale;
     const float RowGap = 8 * Scale;
     float Height = Pad * 2;
     for (const Row& Current : Rows)
@@ -4243,8 +4277,9 @@ void App::DrawShellActivity(const Session& CurrentSession, const ImVec2 PaneTopL
     const ImVec2 Min(PaneTopLeft.x + Margin, PaneTopLeft.y + HeaderHeight + Margin);
     const ImVec2 Max(Min.x + Width, Min.y + Height);
     ImDrawList* const DrawList = ImGui::GetWindowDrawList();
-    DrawList->AddRectFilled(Min, Max, IM_COL32(12, 14, 18, 228), 6 * Scale);
-    DrawList->AddRect(Min, Max, PaneBorderColorU32_, 6 * Scale);
+    DrawList->AddRectFilled(ImVec2(Min.x + 2 * Scale, Min.y + 3 * Scale), ImVec2(Max.x + 2 * Scale, Max.y + 3 * Scale), IM_COL32(0, 0, 0, 120), 6 * Scale);
+    DrawList->AddRectFilled(Min, Max, IM_COL32(12, 14, 18, 255), 6 * Scale);
+    DrawList->AddRect(Min, Max, UiHelpers::WithAlpha(AccentColor_, 200), 6 * Scale, 0, 1.5f * Scale);
 
     const float Inner = Width - Pad * 2;
     const float Left = Min.x + Pad;
@@ -4253,9 +4288,10 @@ void App::DrawShellActivity(const Session& CurrentSession, const ImVec2 PaneTopL
     {
         const float KindWidth = ImGui::CalcTextSize(Current.Kind.c_str()).x;
         const float ElapsedWidth = ImGui::CalcTextSize(Current.Elapsed.c_str()).x;
-        DrawList->AddText(ImVec2(Left, Y), TextDisabledColorU32_, Current.Kind.c_str());
-        const std::string Title = TruncateToWidth(Current.Title, Inner - KindWidth - ElapsedWidth - 16 * Scale);
-        DrawList->AddText(ImVec2(Left + KindWidth + 8 * Scale, Y), TextColorU32_, Title.c_str());
+        DrawList->AddRectFilled(ImVec2(Left - 3 * Scale, Y - 1 * Scale), ImVec2(Left + KindWidth + 3 * Scale, Y + LineHeight + 1 * Scale), UiHelpers::WithAlpha(AccentColor_, 70), 3 * Scale);
+        DrawList->AddText(ImVec2(Left, Y), TextColorU32_, Current.Kind.c_str());
+        const std::string Title = TruncateToWidth(Current.Title, Inner - KindWidth - ElapsedWidth - 20 * Scale);
+        DrawList->AddText(ImVec2(Left + KindWidth + 12 * Scale, Y), TextColorU32_, Title.c_str());
         DrawList->AddText(ImVec2(Left + Inner - ElapsedWidth, Y), TextColorU32_, Current.Elapsed.c_str());
         Y += LineHeight + 3 * Scale;
 
@@ -4278,7 +4314,7 @@ void App::DrawShellActivity(const Session& CurrentSession, const ImVec2 PaneTopL
         Y += BarHeight + 3 * Scale;
 
         const std::string Hint = TruncateToWidth(Current.Hint, Inner);
-        DrawList->AddText(ImVec2(Left, Y), Current.Fill == UsageWarningColor_ ? UsageWarningColor_ : TextDisabledColorU32_, Hint.c_str());
+        DrawList->AddText(ImVec2(Left, Y), Current.Fill == UsageWarningColor_ ? UsageWarningColor_ : UiHelpers::WithAlpha(TextColorU32_, 190), Hint.c_str());
         Y += LineHeight;
         if (Current.Output.empty() == false)
         {

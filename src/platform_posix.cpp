@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <filesystem>
 #include <unistd.h>
 
 #include "git.h"
@@ -55,6 +56,11 @@ bool Platform::IsOnPath(const std::string& Program)
 void Platform::Reveal(const std::string& path)
 {
     Git::RunProcess({"xdg-open", path}, "");
+}
+
+void Platform::ShowInFolder(const std::string& Path)
+{
+    Git::RunProcess({"xdg-open", std::filesystem::path(Path).parent_path().string()}, "");
 }
 
 void Platform::Shutdown(GLFWwindow*) {}
