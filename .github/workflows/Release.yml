@@ -1,0 +1,70 @@
+name: Release
+
+# Pushing a version tag (v0.2.1) builds the Windows program and publishes it as a GitHub release.
+# Release text comes from Docs/ReleaseNotes/<tag>.md when that file exists.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and release, e.g. v0.2.1"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Check the tag matches the version in CMakeLists.txt
+        shell: pwsh
+        run: |
+          $Match = Select-String -Path CMakeLists.txt -Pattern 'project\(\S+ VERSION (\d+\.\d+\.\d+)'
+          $Version = $Match.Matches[0].Groups[1].Value
+          if ("v$Version" -ne $env:TAG)
+          {
+              Write-Error "Tag $env:TAG does not match CMakeLists.txt version $Version"
+              exit 1
+          }
+
+      - name: Configure
+        run: cmake -S . -B build -Wno-author
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path build/Release/claude-terminal.exe -DestinationPath dist/claude-terminal-windows.zip -Force
+
+      - name: Publish release
+        shell: pwsh
+        run: |
+          $NotesFile = "Docs/ReleaseNotes/$env:TAG.md"
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0)
+          {
+              gh release upload $env:TAG dist/claude-terminal-windows.zip --clobber
+              exit $LASTEXITCODE
+          }
+          if (Test-Path $NotesFile)
+          {
+              gh release create $env:TAG dist/claude-terminal-windows.zip --title $env:TAG --notes-file $NotesFile
+          }
+          else
+          {
+              gh release create $env:TAG dist/claude-terminal-windows.zip --title $env:TAG --generate-notes
+          }
+          exit $LASTEXITCODE
