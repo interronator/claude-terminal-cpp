@@ -38,6 +38,8 @@ public:
     static ProcResult RunProcess(const std::vector<std::string>& Argv, const std::string& Cwd);
 
     static Info GetInfo(const std::string& Dir);
+    // Adds Line to the repo's local ignore list (.git/info/exclude) unless it is already there.
+    static void ExcludePath(const std::string& Root, const std::string& Line);
     static bool CreateWorktree(const std::string& ProjectPath, const std::string& Name, Worktree& Out, std::string& Err);
     static bool IsDirty(const std::string& Path);
     // Retries briefly: on Windows the folder can stay locked for a moment after the process exits.

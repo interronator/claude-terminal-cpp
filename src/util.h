@@ -4,7 +4,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <random>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -113,6 +115,16 @@ public:
             End--;
         }
         return Value.substr(Start, End - Start);
+    }
+
+    // Whole file as bytes, without the UTF-8 BOM that Windows PowerShell 5 writes.
+    static std::string ReadFile(const std::filesystem::path& Path)
+    {
+        std::ifstream Stream(Path, std::ios::binary);
+        std::stringstream Buffer;
+        Buffer << Stream.rdbuf();
+        const std::string Text = Buffer.str();
+        return Text.rfind("ï»¿", 0) == 0 ? Text.substr(3) : Text;
     }
 
     static std::string Slug(const std::string& Value)

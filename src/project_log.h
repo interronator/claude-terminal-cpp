@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "util.h"
+
 // A per-project PROJECT_LOG.md that every Claude session appends a line to whenever it finishes a piece of work,
 // plus a free-form notes section the user edits. Entries look like
 // "- 2026-10-20 14:32 | Session name | Work type | What was done" (older lines have no work type).
@@ -77,7 +79,7 @@ public:
         LoadedDir_ = ProjectDir;
         LoadedExists_ = Exists;
         LoadedModified_ = Modified;
-        Parse(Exists == true ? ReadFile(Path) : std::string());
+        Parse(Exists == true ? Util::ReadFile(Path) : std::string());
         return true;
     }
 
@@ -95,7 +97,7 @@ public:
         std::error_code ErrorCode;
         if (std::filesystem::exists(Path, ErrorCode) == true)
         {
-            const std::string Text = ReadFile(Path);
+            const std::string Text = Util::ReadFile(Path);
             const size_t LogAt = FindHeading(Text, LOG_HEADING);
             if (LogAt != std::string::npos)
             {
@@ -261,14 +263,6 @@ private:
         char Buffer[16];
         std::strftime(Buffer, sizeof Buffer, Monthly == true ? "%Y-%m" : "%Y-%m-%d", &Time);
         return Buffer;
-    }
-
-    static std::string ReadFile(const std::filesystem::path& Path)
-    {
-        std::ifstream Stream(Path, std::ios::binary);
-        std::stringstream Buffer;
-        Buffer << Stream.rdbuf();
-        return Buffer.str();
     }
 
     static std::string TrimEnds(const std::string& Text)

@@ -1941,6 +1941,7 @@ void App::Frame(double Now)
     HandleEvents();
     DrawRoot();
     DrawProjectLog();
+    DrawNightlyBuild();
     DrawModals();
     DrawToasts();
 
@@ -2110,6 +2111,25 @@ void App::DrawRoot()
     ImGui::PopStyleColor();
 }
 
+float App::RowCloseButtonWidth() const
+{
+    return ImGui::CalcTextSize("x").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+}
+
+// The "x" on a sidebar row: no box of its own (the row's highlight runs underneath it), just a dim
+// glyph that lights up on hover, like the close "x" on the top bar chips.
+bool App::RowCloseButton(const ImVec2& Pos, const bool Hovered)
+{
+    ImGui::SetCursorScreenPos(Pos);
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_Text, Hovered == true ? WaitingColor_ : TextDisabledColorU32_);
+    const bool Clicked = ImGui::Button("x", ImVec2(RowCloseButtonWidth(), ImGui::GetFrameHeight()));
+    ImGui::PopStyleColor(4);
+    return Clicked;
+}
+
 void App::DrawSidebar(float Width)
 {
     const float Scale = UiScale_;
@@ -2269,6 +2289,10 @@ void App::DrawSidebar(float Width)
             {
                 OpenProjectLog(CurrentProject.Id);
             }
+            if (NightlyBuild_.SupportsCached(CurrentProject.Path, Now_) == true && ImGui::MenuItem("Nightly Build") == true)
+            {
+                OpenNightlyBuild(CurrentProject.Id);
+            }
             if (ImGui::MenuItem("Close unopened sessions..."))
             {
                 RequestCloseUnopenedSessions(CurrentProject.Id);
@@ -2345,8 +2369,24 @@ void App::DrawSidebar(float Width)
                 float const RowWidth = ImGui::GetContentRegionAvail().x - 26 * Scale;
                 ImGui::Indent(12 * Scale);
                 ImVec2 const RowPos = ImGui::GetCursorScreenPos();
-                if (ImGui::Selectable("##s", IsActive, ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_AllowDoubleClick,
-                                      ImVec2(RowWidth - 12 * Scale, RowHeight)))
+                float const CloseWidth = RowCloseButtonWidth();
+                float const SelectableWidth = RowWidth - 10 * Scale + CloseWidth;
+                ImVec2 const ClosePos(RowPos.x + SelectableWidth - CloseWidth, RowPos.y);
+                bool const CloseHovered = ImGui::IsWindowHovered() == true &&
+                                          ImGui::IsMouseHoveringRect(ClosePos, ImVec2(ClosePos.x + CloseWidth, ClosePos.y + RowHeight)) == true;
+                // Hovering the "x" steals hover from the row, so paint the row as hovered ourselves to keep them one piece.
+                bool const RowHighlighted = IsActive == true || CloseHovered == true;
+                if (IsActive == false && CloseHovered == true)
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
+                }
+                bool const RowClicked = ImGui::Selectable("##s", RowHighlighted, ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_AllowDoubleClick,
+                                                          ImVec2(SelectableWidth, RowHeight));
+                if (IsActive == false && CloseHovered == true)
+                {
+                    ImGui::PopStyleColor();
+                }
+                if (RowClicked == true)
                 {
                     OpenSessionFromSidebar(CurrentSession.Rec.Id);
                     if (ImGui::IsMouseDoubleClicked(0))
@@ -2418,9 +2458,7 @@ void App::DrawSidebar(float Width)
                     }
                     ImGui::EndPopup();
                 }
-                ImGui::SameLine(0, 0);
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 2 * Scale);
-                if (IconButton("x"))
+                if (RowCloseButton(ClosePos, CloseHovered) == true)
                 {
                     RequestCloseSession(CurrentSession.Rec.Id);
                 }
@@ -2505,12 +2543,26 @@ void App::DrawSidebar(float Width)
             const ArchivedSession& Archived = State_.Archive[ArchiveIndex];
             ImGui::PushID(static_cast<int>(ArchiveIndex));
             ImGui::Indent(12 * Scale);
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(Archived.Name.c_str());
-            if (Archived.ProjectName.empty() == false)
+            const ImVec2 RowPos = ImGui::GetCursorScreenPos();
+            const float CloseWidth = RowCloseButtonWidth();
+            const float RowWidth = ImGui::GetContentRegionMax().x - 24 * Scale - ImGui::GetCursorPosX() + CloseWidth;
+            const ImVec2 ClosePos(RowPos.x + RowWidth - CloseWidth, RowPos.y);
+            const bool CloseHovered = ImGui::IsWindowHovered() == true &&
+                                      ImGui::IsMouseHoveringRect(ClosePos, ImVec2(ClosePos.x + CloseWidth, ClosePos.y + ImGui::GetFrameHeight())) == true;
+            if (CloseHovered == true)
             {
-                ImGui::SameLine();
-                ImGui::TextDisabled("%s", Archived.ProjectName.c_str());
+                ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
+            }
+            const bool RowClicked = ImGui::Selectable("##archiverow", CloseHovered, ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_AllowDoubleClick,
+                                                      ImVec2(RowWidth, ImGui::GetFrameHeight()));
+            if (CloseHovered == true)
+            {
+                ImGui::PopStyleColor();
+            }
+            if (RowClicked == true &&
+                ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) == true && Archived.Rec.ClaudeSessionId.empty() == false)
+            {
+                ArchiveRestoreIndex = ArchiveIndex;
             }
             if (ImGui::BeginPopupContextItem("##archivemenu") == true)
             {
@@ -2524,8 +2576,15 @@ void App::DrawSidebar(float Width)
                 }
                 ImGui::EndPopup();
             }
-            ImGui::SameLine(ImGui::GetContentRegionMax().x - 24 * Scale);
-            if (IconButton("x") == true)
+            ImGui::SetCursorScreenPos(RowPos);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(Archived.Name.c_str());
+            if (Archived.ProjectName.empty() == false)
+            {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", Archived.ProjectName.c_str());
+            }
+            if (RowCloseButton(ClosePos, CloseHovered) == true)
             {
                 ArchiveDeleteIndex = ArchiveIndex;
             }
@@ -5278,6 +5337,345 @@ void App::DrawProjectLog()
     {
         ProjectLogId_.clear();
     }
+}
+
+void App::DrawNightlyBuild()
+{
+    // Taken even while the window is closed, so the result of an action started just before closing still shows.
+    std::string Message;
+    bool IsError = false;
+    if (NightlyBuild_.TakeMessage(Message, IsError) == true)
+    {
+        ShowToast(Message, IsError);
+    }
+    if (NightlyBuildId_.empty() == true)
+    {
+        return;
+    }
+    const Project* const Owner = FindProject(NightlyBuildId_);
+    if (Owner == nullptr)
+    {
+        NightlyBuildId_.clear();
+        return;
+    }
+    constexpr double REFRESH_SECONDS = 5.0;
+    if (Now_ >= NightlyBuildCheckAt_)
+    {
+        NightlyBuildCheckAt_ = Now_ + REFRESH_SECONDS;
+        NightlyBuild_.Refresh(Owner->Path);
+    }
+
+    const float Scale = UiScale_;
+    ImGuiViewport* const Viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(Viewport->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(std::min(820 * Scale, Viewport->WorkSize.x * 0.9f), std::min(600 * Scale, Viewport->WorkSize.y * 0.85f)), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(420 * Scale, 300 * Scale), ImVec2(Viewport->WorkSize.x, Viewport->WorkSize.y));
+    if (NightlyBuildFocus_ == true)
+    {
+        ImGui::SetNextWindowFocus();
+        NightlyBuildFocus_ = false;
+    }
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14 * Scale, 12 * Scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10 * Scale);
+    bool Open = true;
+    const std::string Title = "Nightly Build - " + Owner->Name + "###nightlyBuild";
+    if (ImGui::Begin(Title.c_str(), &Open, ImGuiWindowFlags_NoCollapse) == true)
+    {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8 * Scale, 6 * Scale));
+        ImGui::TextDisabled("Builds run through Windows Task Scheduler while you are signed in. Files live in %s",
+                            NightlyBuild::JobsRoot(Owner->Path).string().c_str());
+        if (NightlyBuild_.Busy() == true)
+        {
+            ImGui::SameLine();
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(BusyColor_), "Working...");
+        }
+        if (ImGui::BeginTabBar("##nightlyTabs") == true)
+        {
+            if (ImGui::BeginTabItem("Scheduled builds") == true)
+            {
+                DrawNightlyBuildJobs(*Owner);
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Set up a new build") == true)
+            {
+                DrawNightlyBuildSetup(*Owner);
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+        ImGui::PopStyleVar();
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+    if (Open == false)
+    {
+        NightlyBuildId_.clear();
+    }
+}
+
+void App::DrawNightlyBuildJobs(const Project& Owner)
+{
+    const std::vector<NightlyBuild::Job> Jobs = NightlyBuild_.Jobs(Owner.Path);
+    if (Jobs.empty() == true)
+    {
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", NightlyBuild_.Loaded(Owner.Path) == true ? "No nightly builds are set up for this project yet. Use the Set up a new build tab."
+                                                                           : "Loading...");
+        return;
+    }
+    const ImGuiTableFlags Flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY;
+    if (ImGui::BeginTable("##nightlyJobs", 5, Flags) == false)
+    {
+        return;
+    }
+    ImGui::TableSetupScrollFreeze(0, 1);
+    ImGui::TableSetupColumn("Build", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+    ImGui::TableSetupColumn("When", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+    ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthStretch, 0.7f);
+    ImGui::TableSetupColumn("Last run", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+    ImGui::TableSetupColumn("##actions", ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableHeadersRow();
+    const bool Busy = NightlyBuild_.Busy();
+    for (const NightlyBuild::Job& Item : Jobs)
+    {
+        ImGui::PushID(Item.Name.c_str());
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(Item.Name.c_str());
+        const std::string What = NightlyBuild::KindLabel(Item.What) + (Item.What == NightlyBuild::Kind::BuildScript ? "" : " (" + Item.Config + ")");
+        ImGui::TextDisabled("%s", What.c_str());
+
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(NightlyBuild::ScheduleText(Item).c_str());
+        if (Item.IsPaused() == false && Item.NextRun.empty() == false)
+        {
+            ImGui::TextDisabled("Next: %s", Item.NextRun.c_str());
+        }
+
+        ImGui::TableNextColumn();
+        if (Item.TaskState.empty() == true)
+        {
+            ImGui::TextColored(WaitingColorV4_, "Not scheduled");
+        }
+        else if (Item.IsRunning() == true)
+        {
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(BusyColor_), "Building");
+        }
+        else if (Item.IsPaused() == true)
+        {
+            ImGui::TextDisabled("Paused");
+        }
+        else
+        {
+            ImGui::TextUnformatted("Scheduled");
+        }
+
+        ImGui::TableNextColumn();
+        if (Item.LastResult.empty() == true)
+        {
+            ImGui::TextDisabled("Never run");
+        }
+        else
+        {
+            const bool Good = Item.LastResult == "Succeeded" || Item.LastResult == "Running";
+            ImGui::TextColored(Good == true ? ImGui::ColorConvertU32ToFloat4(DoneColor_) : WaitingColorV4_, "%s", Item.LastResult.c_str());
+            ImGui::TextDisabled("%s", Item.LastTime.c_str());
+        }
+
+        ImGui::TableNextColumn();
+        ImGui::BeginDisabled(Busy == true);
+        if (Item.IsRunning() == true)
+        {
+            if (ImGui::SmallButton("Cancel build") == true)
+            {
+                NightlyBuild_.Cancel(Owner.Path, Item.Name);
+            }
+        }
+        else
+        {
+            ImGui::BeginDisabled(Item.TaskState.empty() == true);
+            ImGui::BeginDisabled(Item.IsPaused() == true);
+            if (ImGui::SmallButton("Run now") == true)
+            {
+                NightlyBuild_.RunNow(Owner.Path, Item.Name);
+            }
+            ImGui::EndDisabled();
+            if (Item.IsPaused() == true && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) == true)
+            {
+                ImGui::SetTooltip("Resume the build first to run it.");
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton(Item.IsPaused() == true ? "Resume" : "Pause") == true)
+            {
+                NightlyBuild_.SetPaused(Owner.Path, Item.Name, Item.IsPaused() == false);
+            }
+            ImGui::EndDisabled();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Delete") == true)
+        {
+            const std::string ProjectDir = Owner.Path, Name = Item.Name;
+            ConfirmTitle_ = "Delete nightly build \"" + Name + "\"?";
+            ConfirmText_ = "This removes the scheduled task and its settings" + std::string(Item.IsRunning() == true ? ", and cancels the build that is running now" : "") +
+                           ".\nBuilds it already made in its Output folder are kept.";
+            ConfirmYesAction_ = [this, ProjectDir, Name] { NightlyBuild_.Delete(ProjectDir, Name); };
+            OpenModal(Modal::Confirm);
+        }
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(Item.HasLog == false);
+        if (ImGui::SmallButton("Open log") == true)
+        {
+            Platform::Reveal(NightlyBuild::LogPath(Owner.Path, Item.Name).string());
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(Item.HasOutput == false);
+        if (ImGui::SmallButton("Open output") == true)
+        {
+            Platform::Reveal(Item.OutputDir);
+        }
+        ImGui::EndDisabled();
+        ImGui::PopID();
+    }
+    ImGui::EndTable();
+}
+
+void App::DrawNightlyBuildSetup(const Project& Owner)
+{
+    const float Scale = UiScale_;
+    const bool IsUnreal = NightlyIsUnreal_;
+    const bool HasScript = NightlyHasScript_;
+    const float LabelWidth = 130 * Scale;
+    const float FieldWidth = std::max(200 * Scale, ImGui::GetContentRegionAvail().x - LabelWidth);
+    ImGui::Spacing();
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Name");
+    ImGui::SameLine(LabelWidth);
+    ImGui::SetNextItemWidth(FieldWidth);
+    ImGui::InputText("##nightlyName", NightlyNameBuffer_, sizeof NightlyNameBuffer_);
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("What to build");
+    ImGui::SameLine(LabelWidth);
+    ImGui::SetNextItemWidth(FieldWidth);
+    if (ImGui::BeginCombo("##nightlyKind", NightlyBuild::KindLabel(NightlyDraft_.What).c_str()) == true)
+    {
+        for (const NightlyBuild::Kind Candidate : {NightlyBuild::Kind::PackageGame, NightlyBuild::Kind::CompileEditor, NightlyBuild::Kind::BuildScript})
+        {
+            const bool Available = Candidate == NightlyBuild::Kind::BuildScript ? HasScript : IsUnreal;
+            if (Available == false)
+            {
+                continue;
+            }
+            if (ImGui::Selectable(NightlyBuild::KindLabel(Candidate).c_str(), Candidate == NightlyDraft_.What) == true)
+            {
+                NightlyDraft_.What = Candidate;
+                if (NightlyBuild::ConfigAllowed(Candidate, NightlyDraft_.Config) == false)
+                {
+                    NightlyDraft_.Config = NightlyBuild::CONFIGS[0];
+                }
+            }
+        }
+        ImGui::EndCombo();
+    }
+    const bool UsesEngine = NightlyDraft_.What != NightlyBuild::Kind::BuildScript;
+    if (UsesEngine == true)
+    {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Configuration");
+        ImGui::SameLine(LabelWidth);
+        ImGui::SetNextItemWidth(FieldWidth);
+        if (ImGui::BeginCombo("##nightlyConfig", NightlyDraft_.Config.c_str()) == true)
+        {
+            for (const char* const Config : NightlyBuild::CONFIGS)
+            {
+                if (NightlyBuild::ConfigAllowed(NightlyDraft_.What, Config) == false)
+                {
+                    continue;
+                }
+                if (ImGui::Selectable(Config, NightlyDraft_.Config == Config) == true)
+                {
+                    NightlyDraft_.Config = Config;
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Start time");
+    ImGui::SameLine(LabelWidth);
+    ImGui::SetNextItemWidth(90 * Scale);
+    if (ImGui::InputInt("##nightlyHour", &NightlyDraft_.Hour) == true)
+    {
+        NightlyDraft_.Hour = ((NightlyDraft_.Hour % 24) + 24) % 24;
+    }
+    ImGui::SameLine();
+    ImGui::TextUnformatted(":");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90 * Scale);
+    if (ImGui::InputInt("##nightlyMinute", &NightlyDraft_.Minute, 5) == true)
+    {
+        NightlyDraft_.Minute = ((NightlyDraft_.Minute % 60) + 60) % 60;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(24-hour clock)");
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Days");
+    ImGui::SameLine(LabelWidth);
+    for (int Index = 0; Index < NightlyBuild::DAY_COUNT; Index++)
+    {
+        if (Index > 0)
+        {
+            ImGui::SameLine();
+        }
+        bool Checked = NightlyDraft_.Days[Index];
+        if (ImGui::Checkbox(NightlyBuild::DAY_LABELS[Index], &Checked) == true)
+        {
+            NightlyDraft_.Days[Index] = Checked;
+        }
+    }
+
+    if (NightlyDraft_.What == NightlyBuild::Kind::PackageGame)
+    {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Output folder");
+        ImGui::SameLine(LabelWidth);
+        ImGui::SetNextItemWidth(FieldWidth);
+        const std::string Hint = NightlyBuild::DefaultOutputDir(Owner.Path, NightlyNameBuffer_);
+        ImGui::InputTextWithHint("##nightlyOutput", Hint.c_str(), NightlyOutputBuffer_, sizeof NightlyOutputBuffer_);
+    }
+    if (UsesEngine == true)
+    {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Engine folder");
+        ImGui::SameLine(LabelWidth);
+        ImGui::SetNextItemWidth(FieldWidth);
+        ImGui::InputTextWithHint("##nightlyEngine", "Found automatically from the project's engine version", NightlyEngineBuffer_, sizeof NightlyEngineBuffer_);
+    }
+
+    ImGui::Spacing();
+    if (NightlyBuildError_.empty() == false)
+    {
+        ImGui::TextColored(WaitingColorV4_, "%s", NightlyBuildError_.c_str());
+    }
+    ImGui::BeginDisabled(NightlyBuild_.Busy() == true);
+    if (ImGui::Button("Set up nightly build") == true)
+    {
+        NightlyBuild::Job Item = NightlyDraft_;
+        Item.Name = NightlyNameBuffer_;
+        Item.OutputDir = NightlyDraft_.What == NightlyBuild::Kind::PackageGame ? std::string(NightlyOutputBuffer_) : std::string();
+        Item.EngineDir = UsesEngine == true ? std::string(NightlyEngineBuffer_) : std::string();
+        NightlyBuildError_.clear();
+        if (NightlyBuild_.Create(Owner.Path, Item, NightlyBuildError_) == true)
+        {
+            NightlyNameBuffer_[0] = 0;
+        }
+    }
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Tip: use Run now on the Scheduled builds tab to check it works before leaving it overnight.");
 }
 
 void App::DrawProjectLogEntries(const ProjectLog::Grouping By)

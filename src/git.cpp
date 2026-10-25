@@ -234,17 +234,21 @@ Git::Info Git::GetInfo(const std::string& Dir)
 
 void Git::ExcludeWorktreeDir(const std::string& Root)
 {
-    ProcResult const ExcludePath = RunProcess({"git", "rev-parse", "--git-path", "info/exclude"}, Root);
-    if (ExcludePath.Code != 0)
+    ExcludePath(Root, ".claude/worktrees/");
+}
+
+void Git::ExcludePath(const std::string& Root, const std::string& Line)
+{
+    ProcResult const ExcludeFile = RunProcess({"git", "rev-parse", "--git-path", "info/exclude"}, Root);
+    if (ExcludeFile.Code != 0)
     {
         return;
     }
-    fs::path File(FirstLine(ExcludePath.Output));
+    fs::path File(FirstLine(ExcludeFile.Output));
     if (File.is_relative())
     {
         File = fs::path(Root) / File;
     }
-    const std::string Line = ".claude/worktrees/";
     std::string Existing;
     {
         std::ifstream In(File);

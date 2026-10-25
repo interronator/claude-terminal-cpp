@@ -27,6 +27,7 @@
 #include "imgui.h"
 #include "layout_debug.h"
 #include "live_view.h"
+#include "nightly_build.h"
 #include "project_log.h"
 #include "screenshot_feed.h"
 #include "session.h"
@@ -459,6 +460,28 @@ private:
         ProjectLogFocus_ = true;
     }
     void DrawProjectLog();
+    void OpenNightlyBuild(const std::string& ProjectId)
+    {
+        const Project* const Owner = FindProject(ProjectId);
+        if (Owner == nullptr)
+        {
+            return;
+        }
+        NightlyBuildId_ = ProjectId;
+        NightlyBuildCheckAt_ = 0;
+        NightlyBuildFocus_ = true;
+        NightlyBuildError_.clear();
+        NightlyDraft_ = NightlyBuild::Job{};
+        NightlyIsUnreal_ = NightlyBuild::IsUnreal(Owner->Path);
+        NightlyHasScript_ = NightlyBuild::HasBuildScript(Owner->Path);
+        NightlyDraft_.What = NightlyIsUnreal_ == true ? NightlyBuild::Kind::PackageGame : NightlyBuild::Kind::BuildScript;
+        std::snprintf(NightlyNameBuffer_, sizeof NightlyNameBuffer_, "%s", "Nightly");
+        NightlyOutputBuffer_[0] = 0;
+        NightlyEngineBuffer_[0] = 0;
+    }
+    void DrawNightlyBuild();
+    void DrawNightlyBuildJobs(const Project& Owner);
+    void DrawNightlyBuildSetup(const Project& Owner);
     void DrawProjectLogEntries(const ProjectLog::Grouping By);
     void DrawProjectLogTypeChart();
     void DrawProjectLogGraph();
@@ -569,6 +592,8 @@ private:
     // ---- ui ----
     void DrawRoot();
     void DrawSidebar(float Width);
+    float RowCloseButtonWidth() const;
+    bool RowCloseButton(const ImVec2& Pos, bool Hovered);
     void DrawMain(const float Width, const float Height);
     void DrawMainAndPanel();
     void DrawMainColumn(const float Width);
@@ -836,6 +861,18 @@ private:
     int ProjectLogTypeRange_ = 2;  // 0 today, 1 this week, 2 all time
     int ProjectLogGraphMonthly_ = 0;  // 0 day by day, 1 month by month
     double ProjectLogCheckAt_ = 0;
+
+    NightlyBuild NightlyBuild_;
+    std::string NightlyBuildId_;  // project whose nightly build window is open; empty when closed
+    bool NightlyBuildFocus_ = false;
+    double NightlyBuildCheckAt_ = 0;
+    std::string NightlyBuildError_;
+    NightlyBuild::Job NightlyDraft_;
+    bool NightlyIsUnreal_ = false;  // checked when the window opens, not every frame
+    bool NightlyHasScript_ = false;
+    char NightlyNameBuffer_[64] = "";
+    char NightlyOutputBuffer_[1024] = "";
+    char NightlyEngineBuffer_[1024] = "";
 
     FileIndex FileIndex_;
     char SearchBuffer_[256] = "";
