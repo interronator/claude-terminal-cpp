@@ -2562,6 +2562,73 @@ void App::DrawSidebar(float Width)
     ImGui::PopStyleColor();
 }
 
+float App::OverflowChipWidth() const
+{
+    return ImGui::CalcTextSize("...").x + 30.0f * UiScale_;
+}
+
+void App::DrawOverflowChip(const char* const PopupId, const std::vector<const Session*>& Hidden)
+{
+    const float Scale = UiScale_;
+    ImDrawList* const DrawList = ImGui::GetWindowDrawList();
+    const ImVec2 ChipPos = ImGui::GetCursorScreenPos();
+    const float ChipWidth = OverflowChipWidth();
+    const float ChipHeight = ImGui::GetFrameHeight();
+    ImGui::PushID(PopupId);
+    if (ImGui::InvisibleButton("##chip", ImVec2(ChipWidth, ChipHeight)) == true)
+    {
+        ImGui::OpenPopup(PopupId);
+    }
+    const bool Hovered = ImGui::IsItemHovered();
+    if (Hovered == true)
+    {
+        int RunningCount = 0;
+        for (const Session* const HiddenSession : Hidden)
+        {
+            if (IsSessionRunning(*HiddenSession) == true)
+            {
+                RunningCount++;
+            }
+        }
+        ImGui::SetTooltip("%d more session%s, %d running", static_cast<int>(Hidden.size()), Hidden.size() == 1 ? "" : "s", RunningCount);
+    }
+    DrawList->AddRectFilled(ChipPos, ImVec2(ChipPos.x + ChipWidth, ChipPos.y + ChipHeight), ChipBgColorU32_, 6);
+    if (Hovered == true)
+    {
+        DrawList->AddRect(ChipPos, ImVec2(ChipPos.x + ChipWidth, ChipPos.y + ChipHeight), UiHelpers::WithAlpha(TextDisabledColorU32_, 160), 6);
+    }
+    const Session* const Summary = SummarySession(Hidden);
+    if (Summary != nullptr)
+    {
+        DrawStatusDot(DrawList, ImVec2(ChipPos.x + 12.0f * Scale, ChipPos.y + ChipHeight * 0.5f), 4.0f * Scale, *Summary);
+    }
+    const ImVec2 DotsSize = ImGui::CalcTextSize("...");
+    DrawList->AddText(ImVec2(ChipPos.x + 22.0f * Scale, ChipPos.y + (ChipHeight - DotsSize.y) * 0.5f), TextColorU32_, "...");
+
+    if (ImGui::BeginPopup(PopupId) == true)
+    {
+        std::string LastProjectId;
+        for (const Session* const HiddenSession : Hidden)
+        {
+            if (HiddenSession->Rec.ProjectId != LastProjectId)
+            {
+                LastProjectId = HiddenSession->Rec.ProjectId;
+                const Project* const HiddenProject = FindProject(LastProjectId);
+                ImGui::SeparatorText(HiddenProject != nullptr ? HiddenProject->Name.c_str() : "");
+            }
+            const ImVec2 RowPos = ImGui::GetCursorScreenPos();
+            const std::string Entry = "      " + HiddenSession->Rec.Name + "##" + HiddenSession->Rec.Id;
+            if (ImGui::Selectable(Entry.c_str(), HiddenSession->Rec.Id == State_.Ui.ActiveId) == true)
+            {
+                OpenSession(HiddenSession->Rec.Id);
+            }
+            DrawStatusDot(ImGui::GetWindowDrawList(), ImVec2(RowPos.x + 8.0f * Scale, RowPos.y + ImGui::GetTextLineHeight() * 0.5f), 4.0f * Scale, *HiddenSession);
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+}
+
 void App::DrawToolbar()
 {
     const float Scale = UiScale_;
@@ -2618,6 +2685,11 @@ void App::DrawToolbar()
     const float ItemGap = ImGui::GetStyle().ItemSpacing.x;
     const float GroupPadding = 3.0f * Scale;
     const float GroupGap = 14.0f * Scale;
+    const float MaxChipTextWidth = 170.0f * Scale;
+    const float MoreChipWidth = OverflowChipWidth();
+    const float OverflowReserve = MoreChipWidth + GroupGap;
+    const float BarLimit = Avail - RightWidth;
+    std::vector<const Session*> Overflow;
     bool AnyChip = false;
     for (const std::string& GroupId : ProjectOrder)
     {
@@ -2637,19 +2709,42 @@ void App::DrawToolbar()
             }
         }
 
+        if (Overflow.empty() == false)
+        {
+            Overflow.insert(Overflow.end(), ChildSessions.begin(), ChildSessions.end());
+            continue;
+        }
+
         const ImVec2 HeaderTextSize = ImGui::CalcTextSize(ProjectRecord->Name.c_str());
         const float HeaderCloseWidth = 20.0f * Scale;
         const float HeaderTextAreaWidth = HeaderTextSize.x + 16.0f * Scale;
         const float HeaderWidth = HeaderTextAreaWidth + HeaderCloseWidth;
-        float GroupInnerWidth = HeaderWidth;
-        for (const Session* const ChildSession : ChildSessions)
+        const float GroupStartX = ImGui::GetCursorPosX();
+        if (GroupStartX + HeaderWidth + ItemGap + MoreChipWidth + GroupPadding * 2.0f + OverflowReserve > BarLimit)
         {
-            GroupInnerWidth += ItemGap + ImGui::CalcTextSize(ChildSession->Rec.Name.c_str()).x + 40.0f * Scale;
+            Overflow.insert(Overflow.end(), ChildSessions.begin(), ChildSessions.end());
+            continue;
         }
-
-        if (ImGui::GetCursorPosX() + GroupInnerWidth + GroupPadding * 2.0f > Avail - RightWidth)
+        // Long session names are shortened, and chips that don't fit go behind this group's own "..." chip.
+        std::vector<std::string> ChipLabels;
+        float GroupInnerWidth = HeaderWidth;
+        for (size_t ChipIndex = 0; ChipIndex < ChildSessions.size(); ChipIndex++)
         {
-            break;
+            const std::string Label = TruncateToWidth(ChildSessions[ChipIndex]->Rec.Name, MaxChipTextWidth);
+            const float ChipWidth = ImGui::CalcTextSize(Label.c_str()).x + 40.0f * Scale;
+            const bool IsLastChip = ChipIndex + 1 == ChildSessions.size();
+            const float MoreReserve = IsLastChip == true ? 0.0f : ItemGap + MoreChipWidth;
+            if (GroupStartX + GroupInnerWidth + ItemGap + ChipWidth + MoreReserve + GroupPadding * 2.0f + OverflowReserve > BarLimit)
+            {
+                break;
+            }
+            GroupInnerWidth += ItemGap + ChipWidth;
+            ChipLabels.push_back(Label);
+        }
+        const std::vector<const Session*> GroupHidden(ChildSessions.begin() + static_cast<std::ptrdiff_t>(ChipLabels.size()), ChildSessions.end());
+        if (GroupHidden.empty() == false)
+        {
+            GroupInnerWidth += ItemGap + MoreChipWidth;
         }
         AnyChip = true;
 
@@ -2698,12 +2793,14 @@ void App::DrawToolbar()
         ImGui::PopID();
         ImGui::SameLine();
 
-        for (const Session* const ChildSession : ChildSessions)
+        for (size_t ChipIndex = 0; ChipIndex < ChipLabels.size(); ChipIndex++)
         {
+            const Session* const ChildSession = ChildSessions[ChipIndex];
+            const std::string& ChipLabel = ChipLabels[ChipIndex];
             const bool IsActiveChip = ChildSession->Rec.Id == State_.Ui.ActiveId && ProjectScopeId_.empty() == true;
             ImGui::PushID(ChildSession->Rec.Id.c_str());
             const ImVec2 ChipPos = ImGui::GetCursorScreenPos();
-            const ImVec2 ChipTextSize = ImGui::CalcTextSize(ChildSession->Rec.Name.c_str());
+            const ImVec2 ChipTextSize = ImGui::CalcTextSize(ChipLabel.c_str());
             const float ChipWidth = ChipTextSize.x + 40.0f * Scale;
             const float ChipCloseWidth = 20.0f * Scale;
             if (ImGui::InvisibleButton("##chip", ImVec2(ChipWidth - ChipCloseWidth, ImGui::GetFrameHeight())))
@@ -2719,6 +2816,10 @@ void App::DrawToolbar()
                 {
                     OpenSession(ChildSession->Rec.Id);
                 }
+            }
+            if (ImGui::IsItemHovered() == true && ChipLabel != ChildSession->Rec.Name)
+            {
+                ImGui::SetTooltip("%s", ChildSession->Rec.Name.c_str());
             }
             if (ImGui::BeginPopupContextItem("##chipmenu") == true)
             {
@@ -2757,7 +2858,7 @@ void App::DrawToolbar()
             }
             DrawStatusDot(DrawList, ImVec2(ChipPos.x + 12.0f * Scale, ChipPos.y + ImGui::GetFrameHeight() * 0.5f), 4.0f * Scale, *ChildSession);
             DrawList->AddText(ImVec2(ChipPos.x + 24.0f * Scale, ChipPos.y + (ImGui::GetFrameHeight() - ChipTextSize.y) * 0.5f), TextColorU32_,
-                              ChildSession->Rec.Name.c_str());
+                              ChipLabel.c_str());
             const ImVec2 ChipXSize = ImGui::CalcTextSize("x");
             DrawList->AddText(ImVec2(ChipClosePos.x + (ChipCloseWidth - ChipXSize.x) * 0.5f,
                                      ChipClosePos.y + (ImGui::GetFrameHeight() - ChipXSize.y) * 0.5f - ImGui::GetFontSize() * 0.12f),
@@ -2765,9 +2866,20 @@ void App::DrawToolbar()
             ImGui::SameLine();
             ImGui::PopID();
         }
+        if (GroupHidden.empty() == false)
+        {
+            ImGui::PushID(ProjectRecord->Id.c_str());
+            DrawOverflowChip("##groupmore", GroupHidden);
+            ImGui::PopID();
+            ImGui::SameLine();
+        }
         ImGui::SameLine(0, GroupGap);
     }
-    if (AnyChip == false)
+    if (Overflow.empty() == false)
+    {
+        DrawOverflowChip("##morechips", Overflow);
+    }
+    else if (AnyChip == false)
     {
         ImGui::TextDisabled("No open sessions");
     }

@@ -243,7 +243,12 @@ private:
             const double TimeoutMs = Input.value("timeout", 0.0);
             Command.Deadline = When + (TimeoutMs > 0 ? static_cast<std::time_t>(TimeoutMs / 1000.0) : DEFAULT_SHELL_TIMEOUT_SECONDS);
         }
-        Commands_[Block.value("id", "")] = Command;
+        const std::string ToolUseId = Block.value("id", "");
+        if (Commands_.count(ToolUseId) > 0)
+        {
+            return;
+        }
+        Commands_[ToolUseId] = Command;
     }
 
     // A tool result either finishes a shell command, or says a background shell or monitor is now running on its own.
@@ -601,7 +606,8 @@ private:
             return;
         }
         const nlohmann::json Entry = nlohmann::json::parse(Line, nullptr, false);
-        if (Entry.is_object() == false)
+        // api-request-* entries re-log messages already seen, without timestamps; replaying them would reset tracked commands.
+        if (Entry.is_object() == false || Entry.value("type", "").rfind("api-request", 0) == 0)
         {
             return;
         }

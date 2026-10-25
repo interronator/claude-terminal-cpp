@@ -586,6 +586,9 @@ private:
     void DrawScreenshotPanel(const float Width);
     bool DrawScreenshotCard(const ScreenshotFeed::Entry& Item, const float Width);
     void DrawToolbar();
+    float OverflowChipWidth() const;
+    // A "..." chip with a status dot summarising the hidden sessions; clicking it lists them.
+    void DrawOverflowChip(const char* const PopupId, const std::vector<const Session*>& Hidden);
     void DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index);
     void DrawTerminal(Session& CurrentSession, ImVec2 Size, bool IsActive);
     void DrawFindBar(Session& Target, ImVec2 PanelPos, ImVec2 PanelSize);
@@ -637,6 +640,40 @@ private:
         return STOPS[STOP_COUNT - 1].Color;
     }
     void DrawStatusDot(ImDrawList* DrawList, ImVec2 Center, float Radius, const Session& CurrentSession) const;
+    static bool IsSessionRunning(const Session& CurrentSession)
+    {
+        return CurrentSession.CurrentStatus == Status::Busy || CurrentSession.CurrentStatus == Status::Starting || CurrentSession.InBackground() == true;
+    }
+    // The session whose dot best represents a group: waiting beats running beats unseen, otherwise the first one.
+    static const Session* SummarySession(const std::vector<const Session*>& Group)
+    {
+        const Session* Running = nullptr;
+        const Session* Unseen = nullptr;
+        for (const Session* const Member : Group)
+        {
+            if (Member->CurrentStatus == Status::Waiting)
+            {
+                return Member;
+            }
+            if (Running == nullptr && IsSessionRunning(*Member) == true)
+            {
+                Running = Member;
+            }
+            if (Unseen == nullptr && Member->Unseen == true)
+            {
+                Unseen = Member;
+            }
+        }
+        if (Running != nullptr)
+        {
+            return Running;
+        }
+        if (Unseen != nullptr)
+        {
+            return Unseen;
+        }
+        return Group.empty() == true ? nullptr : Group.front();
+    }
     bool DrawBoxChar(ImDrawList* DrawList, float CellX, float CellY, float CellWidth, float CellHeight, uint32_t CodePoint, ImU32 CurrentColor);
     // Draws one small meter at the current cursor (background + proportional fill + centered "<Pct>%<Suffix>"
     // text), advancing the cursor like any other widget. Returns true if it was clicked this frame.
