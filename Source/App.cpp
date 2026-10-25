@@ -840,6 +840,7 @@ void App::Frame(double Now)
     HandleEvents();
     DrawRoot();
     DrawProjectLog();
+    DrawProjectSettings();
     DrawNightlyBuild();
     DrawModals();
     DrawToasts();

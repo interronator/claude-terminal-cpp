@@ -197,7 +197,11 @@ void App::DrawSidebar(float Width)
             }
             if (ImGui::MenuItem("Project log") == true)
             {
-                OpenProjectLog(CurrentProject.Id);
+                ProjectLogWindow_.Open(CurrentProject.Id);
+            }
+            if (ImGui::MenuItem("Project settings...") == true)
+            {
+                ProjectSettingsWindow_.Open(CurrentProject.Id);
             }
             if (NightlyBuild_.SupportsCached(CurrentProject.Path, Now_) == true && ImGui::MenuItem("Nightly Build") == true)
             {

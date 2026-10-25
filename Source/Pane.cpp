@@ -182,7 +182,7 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
         ImGui::PushID("gitActions");
         if (ImGui::Button("Log") == true)
         {
-            OpenProjectLog(CurrentSession.Rec.ProjectId);
+            ProjectLogWindow_.Open(CurrentSession.Rec.ProjectId);
         }
         if (ImGui::IsItemHovered() == true)
         {

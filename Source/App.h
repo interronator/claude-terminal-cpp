@@ -29,6 +29,8 @@
 #include "LiveView.h"
 #include "NightlyBuild.h"
 #include "ProjectLog.h"
+#include "ProjectLogWindow.h"
+#include "ProjectSettingsWindow.h"
 #include "ScreenshotFeed.h"
 #include "Session.h"
 #include "Store.h"
@@ -452,14 +454,26 @@ private:
         }
         return nullptr;
     }
-    void OpenProjectLog(const std::string& ProjectId)
+    void DrawProjectLog()
     {
-        ProjectLogId_ = ProjectId;
-        ProjectLogCheckAt_ = 0;
-        ProjectLogNotesDirty_ = false;
-        ProjectLogFocus_ = true;
+        const ProjectLogWindow::Palette Colors{AccentColorV4_, TextColorV4_, PaneBgColorU32_, TextColorU32_, TextDisabledColorU32_};
+        std::string Error;
+        ProjectLogWindow_.Draw(State_.Projects, Now_, UiScale_, Colors, Error);
+        if (Error.empty() == false)
+        {
+            ShowToast(Error, true);
+        }
     }
-    void DrawProjectLog();
+    void DrawProjectSettings()
+    {
+        std::string Message;
+        bool IsError = false;
+        ProjectSettingsWindow_.Draw(State_.Projects, UiScale_, AccentColorV4_, Message, IsError);
+        if (Message.empty() == false)
+        {
+            ShowToast(Message, IsError);
+        }
+    }
     void OpenNightlyBuild(const std::string& ProjectId)
     {
         const Project* const Owner = FindProject(ProjectId);
@@ -482,41 +496,6 @@ private:
     void DrawNightlyBuild();
     void DrawNightlyBuildJobs(const Project& Owner);
     void DrawNightlyBuildSetup(const Project& Owner);
-    void DrawProjectLogEntries(const ProjectLog::Grouping By);
-    void DrawProjectLogTypeChart();
-    void DrawProjectLogGraph();
-    // Colors follow the all-time ranking of work types, so a type keeps its color in every chart and time range.
-    ImU32 WorkTypeColorFor(const std::string& Type) const
-    {
-        const std::vector<ProjectLog::TypeCount>& AllTime = ProjectLog_.AllTimeCounts();
-        for (size_t Index = 0; Index < AllTime.size(); Index++)
-        {
-            if (AllTime[Index].Type == Type)
-            {
-                return WorkTypeColor(Index);
-            }
-        }
-        return WorkTypeColor(AllTime.size());
-    }
-    static ImU32 WorkTypeColor(const size_t Index)
-    {
-        static constexpr ImU32 PALETTE[] = {IM_COL32(86, 156, 214, 255),  IM_COL32(230, 145, 56, 255),  IM_COL32(106, 190, 120, 255),
-                                            IM_COL32(214, 92, 92, 255),   IM_COL32(170, 120, 210, 255), IM_COL32(220, 200, 80, 255),
-                                            IM_COL32(80, 200, 200, 255),  IM_COL32(220, 120, 180, 255), IM_COL32(150, 150, 110, 255),
-                                            IM_COL32(120, 140, 230, 255), IM_COL32(180, 220, 100, 255), IM_COL32(160, 110, 80, 255)};
-        return PALETTE[Index % (sizeof(PALETTE) / sizeof(PALETTE[0]))];
-    }
-    static int ResizeStringCallback(ImGuiInputTextCallbackData* const Data)
-    {
-        if (Data->EventFlag != ImGuiInputTextFlags_CallbackResize)
-        {
-            return 0;
-        }
-        std::string* const Text = static_cast<std::string*>(Data->UserData);
-        Text->resize(static_cast<size_t>(Data->BufTextLen));
-        Data->Buf = Text->data();
-        return 0;
-    }
     void OpenSessionFromSidebar(const std::string& Id)
     {
         const Session* const Target = FindSession(Id);
@@ -868,14 +847,8 @@ private:
     std::map<std::string, double> LiveFrameCheckAt_;
     std::map<std::string, LiveView::Frame> LiveFrames_;
 
-    ProjectLog ProjectLog_;
-    std::string ProjectLogId_;  // project whose log window is open; empty when closed
-    std::string ProjectLogNotes_;
-    bool ProjectLogNotesDirty_ = false;
-    bool ProjectLogFocus_ = false;
-    int ProjectLogTypeRange_ = 2;  // 0 today, 1 this week, 2 all time
-    int ProjectLogGraphMonthly_ = 0;  // 0 day by day, 1 month by month
-    double ProjectLogCheckAt_ = 0;
+    ProjectLogWindow ProjectLogWindow_;
+    ProjectSettingsWindow ProjectSettingsWindow_;
 
     NightlyBuild NightlyBuild_;
     std::string NightlyBuildId_;  // project whose nightly build window is open; empty when closed

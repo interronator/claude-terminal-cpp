@@ -53,9 +53,9 @@ set(APP_SOURCES
   Source/Main.cpp Source/App.cpp Source/Session.cpp Source/Terminal.cpp
   Source/Git.cpp Source/Store.cpp
   Source/Account.cpp Source/Input.cpp Source/Modals.cpp Source/NightlyBuildWindow.cpp
-  Source/Pane.cpp Source/MainPanels.cpp Source/ProjectLogWindow.cpp Source/ReviewWindow.cpp
+  Source/Pane.cpp Source/MainPanels.cpp Source/ReviewWindow.cpp
   Source/ScreenshotPanel.cpp Source/QuickSearch.cpp Source/Sidebar.cpp Source/TerminalView.cpp
-  Source/Toolbar.cpp)
+  Source/Toolbar.cpp Source/StbImage.cpp)
 if(WIN32)
   list(APPEND APP_SOURCES Source/PtyWin.cpp Source/PlatformWin.cpp Resources/App.rc)
 else()
