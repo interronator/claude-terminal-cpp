@@ -4,7 +4,7 @@ Checks: >
   readability-implicit-bool-conversion
 
 WarningsAsErrors: ''
-HeaderFilterRegex: '(^|[/\\])src[/\\]'
+HeaderFilterRegex: '(^|[/\\])Source[/\\]'
 FormatStyle: none
 
 CheckOptions:

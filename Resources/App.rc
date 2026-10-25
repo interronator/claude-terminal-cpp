@@ -1,4 +1,4 @@
 // GLFW_ICON is the resource name GLFW's Win32 backend looks for automatically
 // (window/titlebar/taskbar icon). It also becomes the .exe's file icon since
 // it's the only icon resource in the module.
-GLFW_ICON ICON "icon.ico"
+GLFW_ICON ICON "Icon.ico"

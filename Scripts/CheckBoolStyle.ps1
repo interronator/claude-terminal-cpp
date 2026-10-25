@@ -1,5 +1,5 @@
 <#
-Flags raw `!` negation (if (!x), !flag, && !y, while (!z), ...) in src/.
+Flags raw `!` negation (if (!x), !flag, && !y, while (!z), ...) in Source/.
 CLAUDE.md's "always use == or !=" rule has no clang-tidy check that can
 see it (`!x.empty()` is already bool, so there's no implicit conversion
 for readability-implicit-bool-conversion to catch) — this heuristic grep
@@ -9,7 +9,7 @@ clang-tidy would handle fine) can still produce a false positive or miss.
 #>
 
 param(
-    [string]$Path = "src"
+    [string]$Path = "Source"
 )
 
 $pattern = '(?<!=)!(?!=)'

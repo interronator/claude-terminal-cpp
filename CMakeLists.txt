@@ -50,21 +50,21 @@ find_package(OpenGL REQUIRED)
 
 # ---- the app ---------------------------------------------------------------
 set(APP_SOURCES
-  src/Main.cpp src/App.cpp src/Session.cpp src/Terminal.cpp
-  src/Git.cpp src/Store.cpp
-  src/Account.cpp src/Input.cpp src/Modals.cpp src/NightlyBuildWindow.cpp
-  src/Pane.cpp src/MainPanels.cpp src/ProjectLogWindow.cpp src/ReviewWindow.cpp
-  src/ScreenshotPanel.cpp src/QuickSearch.cpp src/Sidebar.cpp src/TerminalView.cpp
-  src/Toolbar.cpp)
+  Source/Main.cpp Source/App.cpp Source/Session.cpp Source/Terminal.cpp
+  Source/Git.cpp Source/Store.cpp
+  Source/Account.cpp Source/Input.cpp Source/Modals.cpp Source/NightlyBuildWindow.cpp
+  Source/Pane.cpp Source/MainPanels.cpp Source/ProjectLogWindow.cpp Source/ReviewWindow.cpp
+  Source/ScreenshotPanel.cpp Source/QuickSearch.cpp Source/Sidebar.cpp Source/TerminalView.cpp
+  Source/Toolbar.cpp)
 if(WIN32)
-  list(APPEND APP_SOURCES src/PtyWin.cpp src/PlatformWin.cpp resources/app.rc)
+  list(APPEND APP_SOURCES Source/PtyWin.cpp Source/PlatformWin.cpp Resources/App.rc)
 else()
-  list(APPEND APP_SOURCES src/PtyPosix.cpp src/PlatformPosix.cpp)
+  list(APPEND APP_SOURCES Source/PtyPosix.cpp Source/PlatformPosix.cpp)
 endif()
 
 add_executable(claude-terminal ${APP_SOURCES})
 target_compile_definitions(claude-terminal PRIVATE CLAUDE_TERMINAL_VERSION="${PROJECT_VERSION}")
-target_include_directories(claude-terminal PRIVATE src ${stb_SOURCE_DIR})
+target_include_directories(claude-terminal PRIVATE Source ${stb_SOURCE_DIR})
 target_link_libraries(claude-terminal PRIVATE imgui vterm nlohmann_json::nlohmann_json OpenGL::GL)
 
 if(WIN32)
