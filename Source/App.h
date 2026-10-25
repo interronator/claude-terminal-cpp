@@ -619,8 +619,23 @@ private:
     void DrawFindBar(Session& Target, ImVec2 PanelPos, ImVec2 PanelSize);
     void RunFind(Session& Target, bool Forward, bool KeepCurrent);
     void DrawModals();
+    void DrawAddProjectModal(const bool Enter);
+    void DrawNewSessionModal(const bool Enter);
+    void DrawRenameModal(const bool Enter);
+    void DrawConfirmModal();
+    void DrawCloseSessionModal();
+    void DrawSettingsModal();
+    void DrawUsageModal();
+    void DrawGitHubModal();
+    void DrawReviewModal();
     void DrawToasts();
     void OpenModal(Modal CurrentModal) { Modal_ = CurrentModal; ModalJustOpened_ = true; }
+    // Only valid while the modal popup is the current ImGui window.
+    void CloseModal()
+    {
+        ImGui::CloseCurrentPopup();
+        Modal_ = Modal::None;
+    }
     // Green until 20%, yellow by 25%, orange by 50%, red by 75%, then red that flashes harder on the way to 100%.
     ImVec4 ContextColor(const int Percent) const
     {
