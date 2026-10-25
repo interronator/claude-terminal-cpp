@@ -2,6 +2,31 @@ build/
 build-*/
 Binaries/
 release/
+dist/
 .vs/
+.vscode/
+.idea/
 *.user
 .claude/
+
+# Per-project files written by Claude sessions and this app
+PROJECT_LOG.md
+CLAUDE.local.md
+ClaudeShots/
+NightlyBuilds/
+
+# Runtime state, logs and crash dumps
+state.json
+command_durations.json
+imgui.ini
+*.log
+*.dmp
+
+# Credentials and secrets
+.credentials.json
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
