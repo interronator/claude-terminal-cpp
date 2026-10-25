@@ -14,7 +14,7 @@
 #include <vector>
 
 #include "nlohmann/json.hpp"
-#include "screenshot_finder.h"
+#include "ScreenshotFinder.h"
 
 // Tails one Claude Code session transcript (~/.claude/projects/<project>/<session id>.jsonl) and reports
 // image files the session created or changed while working (not ones it merely mentioned), once they exist on disk.

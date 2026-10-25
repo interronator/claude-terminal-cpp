@@ -13,7 +13,7 @@
 #include <thread>
 #include <vector>
 
-#include "pty_host.h"
+#include "Pty.h"
 
 extern char** environ;
 

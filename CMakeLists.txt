@@ -50,12 +50,16 @@ find_package(OpenGL REQUIRED)
 
 # ---- the app ---------------------------------------------------------------
 set(APP_SOURCES
-  src/main.cpp src/app.cpp src/session.cpp src/terminal.cpp
-  src/git.cpp src/store.cpp)
+  src/Main.cpp src/App.cpp src/Session.cpp src/Terminal.cpp
+  src/Git.cpp src/Store.cpp
+  src/Account.cpp src/Input.cpp src/Modals.cpp src/NightlyBuildWindow.cpp
+  src/Pane.cpp src/MainPanels.cpp src/ProjectLogWindow.cpp src/ReviewWindow.cpp
+  src/ScreenshotPanel.cpp src/QuickSearch.cpp src/Sidebar.cpp src/TerminalView.cpp
+  src/Toolbar.cpp)
 if(WIN32)
-  list(APPEND APP_SOURCES src/pty_win.cpp src/platform_win.cpp resources/app.rc)
+  list(APPEND APP_SOURCES src/PtyWin.cpp src/PlatformWin.cpp resources/app.rc)
 else()
-  list(APPEND APP_SOURCES src/pty_posix.cpp src/platform_posix.cpp)
+  list(APPEND APP_SOURCES src/PtyPosix.cpp src/PlatformPosix.cpp)
 endif()
 
 add_executable(claude-terminal ${APP_SOURCES})

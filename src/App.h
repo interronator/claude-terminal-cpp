@@ -19,21 +19,21 @@
 #include <string>
 #include <vector>
 
-#include "command_timing.h"
-#include "file_index.h"
-#include "git.h"
-#include "git_review.h"
-#include "github_login.h"
+#include "CommandTiming.h"
+#include "FileIndex.h"
+#include "Git.h"
+#include "GitReview.h"
+#include "GitHubLogin.h"
 #include "imgui.h"
-#include "layout_debug.h"
-#include "live_view.h"
-#include "nightly_build.h"
-#include "project_log.h"
-#include "screenshot_feed.h"
-#include "session.h"
-#include "store.h"
-#include "transcript_scanner.h"
-#include "usage.h"
+#include "LayoutDebug.h"
+#include "LiveView.h"
+#include "NightlyBuild.h"
+#include "ProjectLog.h"
+#include "ScreenshotFeed.h"
+#include "Session.h"
+#include "Store.h"
+#include "TranscriptScanner.h"
+#include "UsageClient.h"
 
 struct GLFWwindow;
 class ImageCache;

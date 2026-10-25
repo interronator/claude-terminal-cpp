@@ -1,4 +1,4 @@
-#include "git.h"
+#include "Git.h"
 
 #include <chrono>
 #include <cstring>
@@ -6,10 +6,10 @@
 #include <fstream>
 #include <thread>
 
-#include "util.h"
+#include "Util.h"
 
 #ifdef _WIN32
-#include "win_strings.h"
+#include "WinStrings.h"
 #else
 #include <fcntl.h>
 #include <sys/wait.h>

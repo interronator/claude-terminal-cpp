@@ -1,11 +1,11 @@
-#include "session.h"
+#include "Session.h"
 
 #include <algorithm>
 #include <cctype>
 
-#include "build_scripts.h"
-#include "platform.h"
-#include "util.h"
+#include "BuildScripts.h"
+#include "Platform.h"
+#include "Util.h"
 
 namespace
 {

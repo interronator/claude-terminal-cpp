@@ -10,8 +10,8 @@
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 
-#include "platform.h"
-#include "win_strings.h"
+#include "Platform.h"
+#include "WinStrings.h"
 
 #ifndef DWMWA_CAPTION_COLOR
 #define DWMWA_CAPTION_COLOR 35

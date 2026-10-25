@@ -50,13 +50,13 @@ Alt+1…9 focus pane; Ctrl+Shift+N new session; Ctrl+Shift+M maximize; Ctrl+Shif
 - Fonts: Segoe UI / Cascadia Mono / Consolas by default; override with `CT_FONT_UI`, `CT_FONT_MONO`, `CT_FONT_MONO_BOLD`.
 
 ## Status detection
-Inferred from output: sustained output = busy; after ~2s silence, the bottom of the screen is matched against approval patterns (`Do you want to`, `Esc to cancel`, `❯ 1. Yes`…). Adjust the patterns in `src/session.cpp` if Claude Code's prompts change.
+Inferred from output: sustained output = busy; after ~2s silence, the bottom of the screen is matched against approval patterns (`Do you want to`, `Esc to cancel`, `❯ 1. Yes`…). Adjust the patterns in `src/Session.cpp` if Claude Code's prompts change.
 
 ## Layout
-- `src/` C++ sources. `app.cpp` is the UI, `session.cpp` status and lifecycle, `terminal.cpp` the libvterm wrapper, `pty_win.cpp` / `pty_posix.cpp` the PTY backends, `git.cpp` worktrees, `store.cpp` JSON state. Most other logic lives in header-only classes (`*.h`).
+- `src/` C++ sources, one PascalCase file per class or feature. `App.cpp` is the app core and frame loop; the rest of the UI is split by area into `Sidebar.cpp`, `Toolbar.cpp`, `Pane.cpp`, `TerminalView.cpp`, `Modals.cpp`, `ProjectLogWindow.cpp` and so on. `Session.cpp` handles status and lifecycle, `Terminal.cpp` wraps libvterm, `PtyWin.cpp` / `PtyPosix.cpp` are the PTY backends, `Git.cpp` handles worktrees and `Store.cpp` JSON state. Most other logic lives in header-only classes (`*.h`).
 - `resources/` Windows icon and resource script.
 - `scripts/` developer tooling (`check-bool-style.ps1` flags raw `!` negation).
 - `build.bat` builds and copies the exe to `Binaries/`. `build/` and `Binaries/` are generated and git-ignored.
 
 ## Testing status
-Developed and tested on Windows with MSVC. The POSIX PTY backend (`pty_posix.cpp`) is less exercised.
+Developed and tested on Windows with MSVC. The POSIX PTY backend (`PtyPosix.cpp`) is less exercised.

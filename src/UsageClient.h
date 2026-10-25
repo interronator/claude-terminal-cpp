@@ -6,7 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "platform.h"
+#include "Platform.h"
 
 struct UsageInfo
 {

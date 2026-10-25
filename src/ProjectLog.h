@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "util.h"
+#include "Util.h"
 
 // A per-project PROJECT_LOG.md that every Claude session appends a line to whenever it finishes a piece of work,
 // plus a free-form notes section the user edits. Entries look like

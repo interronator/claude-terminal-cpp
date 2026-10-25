@@ -5,9 +5,9 @@
 #include <mutex>
 #include <string>
 
-#include "pty_host.h"
-#include "store.h"
-#include "terminal.h"
+#include "Pty.h"
+#include "Store.h"
+#include "Terminal.h"
 
 enum class Status { Starting, Busy, Waiting, Idle, Exited };
 

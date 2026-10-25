@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "git.h"
+#include "Git.h"
 
 class GitReview
 {

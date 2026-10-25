@@ -6,7 +6,7 @@
 #include <sstream>
 #include <string>
 
-#include "screenshot_finder.h"
+#include "ScreenshotFinder.h"
 
 // A rough live view of an Unreal editor or game a session runs offscreen: a Python helper inside Unreal saves a small
 // screenshot about once a second as <tag>_live.png in the session's screenshot folder, and the pane shows the newest one.

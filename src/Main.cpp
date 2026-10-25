@@ -5,13 +5,13 @@
 #include <string>
 #include <vector>
 
-#include "app.h"
+#include "App.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
 #include "imgui.h"
-#include "platform.h"
-#include "store.h"
-#include "style.h"
+#include "Platform.h"
+#include "Store.h"
+#include "Style.h"
 
 static App* GApp = nullptr;
 

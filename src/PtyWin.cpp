@@ -5,8 +5,8 @@
 #include <mutex>
 #include <thread>
 
-#include "pty_host.h"
-#include "win_strings.h"
+#include "Pty.h"
+#include "WinStrings.h"
 
 // Resolve ConPTY at runtime: works with old MinGW headers and degrades
 // gracefully on Windows older than 10 1809.

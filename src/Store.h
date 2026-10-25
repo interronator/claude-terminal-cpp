@@ -7,7 +7,7 @@
 
 #include <nlohmann/json_fwd.hpp>
 
-#include "keybindings.h"
+#include "KeyBindings.h"
 
 struct Worktree
 {

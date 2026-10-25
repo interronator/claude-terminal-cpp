@@ -17,8 +17,8 @@
 #include <thread>
 #include <vector>
 
-#include "git.h"
-#include "util.h"
+#include "Git.h"
+#include "Util.h"
 
 // Scheduled Windows builds of a project. Each one is a folder under <project>/NightlyBuilds holding its settings, the
 // PowerShell script Task Scheduler runs, the last log, and a status file the script keeps up to date. Every call that

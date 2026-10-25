@@ -5,9 +5,9 @@
 #include <thread>
 #include <vector>
 
-#include "git.h"
-#include "pty_host.h"
-#include "session.h"
+#include "Git.h"
+#include "Pty.h"
+#include "Session.h"
 
 // Drives `gh auth login --web` in a hidden pseudo-terminal so the one-time device code can be shown in the app.
 // gh does the OAuth exchange and keeps the token; this class only reads gh's console output.

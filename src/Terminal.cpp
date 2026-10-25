@@ -1,9 +1,9 @@
-#include "terminal.h"
+#include "Terminal.h"
 
 #include <algorithm>
 #include <cstring>
 
-#include "util.h"
+#include "Util.h"
 
 namespace
 {

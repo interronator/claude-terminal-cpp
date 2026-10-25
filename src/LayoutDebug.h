@@ -7,7 +7,7 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"
-#include "store.h"
+#include "Store.h"
 
 // Set CT_DEBUG_LAYOUT=1 to log every change of a sampled layout value, with the mouse position and the
 // window under the mouse, to layout-debug.log next to state.json. Used to track down layout jitter.

@@ -2,8 +2,8 @@
 #include <filesystem>
 #include <unistd.h>
 
-#include "git.h"
-#include "platform.h"
+#include "Git.h"
+#include "Platform.h"
 
 void Platform::Notify(GLFWwindow*, const std::string& title, const std::string& body)
 {

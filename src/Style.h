@@ -4,8 +4,8 @@
 #include <functional>
 
 #include "imgui.h"
-#include "platform.h"
-#include "store.h"
+#include "Platform.h"
+#include "Store.h"
 
 class Style
 {
