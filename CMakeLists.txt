@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(ClaudeTerminal VERSION 0.2.1 LANGUAGES C CXX)
+project(ClaudeTerminal VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -55,7 +55,7 @@ set(APP_SOURCES
   Source/Account.cpp Source/Input.cpp Source/Modals.cpp Source/NightlyBuildWindow.cpp
   Source/Pane.cpp Source/MainPanels.cpp Source/ReviewWindow.cpp
   Source/ScreenshotPanel.cpp Source/QuickSearch.cpp Source/Sidebar.cpp Source/TerminalView.cpp
-  Source/Toolbar.cpp Source/StbImage.cpp)
+  Source/Toolbar.cpp Source/StbImage.cpp Source/PeerOverlay.cpp Source/GeneralSession.cpp)
 if(WIN32)
   list(APPEND APP_SOURCES Source/PtyWin.cpp Source/PlatformWin.cpp Resources/App.rc)
 else()

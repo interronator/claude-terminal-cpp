@@ -395,6 +395,9 @@ void App::DrawTerminal(Session& CurrentSession, ImVec2 Size, bool IsActive)
             CellAt(Io.MousePos, Row, Col);
             if (Reporting)
             {
+                CurrentSession.ReportingDrag = true;
+                CurrentSession.ReportedRow = Row;
+                CurrentSession.ReportedCol = Col;
                 CurrentSession.Typing(Now_, StatusCallback(),
                                [&](Terminal& Term)
                                {
@@ -419,13 +422,27 @@ void App::DrawTerminal(Session& CurrentSession, ImVec2 Size, bool IsActive)
             CurrentSession.SelectionEndCol = Col;
             CurrentSession.HasSelection = (CurrentSession.SelectionStartRow == CurrentSession.SelectionEndRow && CurrentSession.SelectionStartCol == CurrentSession.SelectionEndCol) == false;
         }
+        // The program draws its own selection, so it needs every drag step, not just the press and release.
+        if (CurrentSession.ReportingDrag == true && Reporting == true && ImGui::IsMouseDown(ImGuiMouseButton_Left) == true)
+        {
+            int Row = 0, Col = 0;
+            CellAt(Io.MousePos, Row, Col);
+            if (Row != CurrentSession.ReportedRow || Col != CurrentSession.ReportedCol)
+            {
+                CurrentSession.ReportedRow = Row;
+                CurrentSession.ReportedCol = Col;
+                CurrentSession.Typing(Now_, StatusCallback(), [&](Terminal& Term) { Term.SendMouseMove(Row, Col, VTERM_MOD_NONE); });
+            }
+        }
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
         {
+            const bool WasReportingDrag = CurrentSession.ReportingDrag;
+            CurrentSession.ReportingDrag = false;
             if (CurrentSession.Selecting)
             {
                 CurrentSession.Selecting = false;
             }
-            else if (Reporting && Hovered)
+            else if (Reporting && (Hovered || WasReportingDrag == true))
             {
                 int Row = 0, Col = 0;
                 CellAt(Io.MousePos, Row, Col);

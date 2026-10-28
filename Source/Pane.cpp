@@ -35,6 +35,7 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6 * Scale, 0));
     ImGui::BeginChild(("##pane" + CurrentSession.Rec.Id).c_str(), Size, ImGuiChildFlags_Borders,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    PeerVeins_.AddPane(CurrentSession.Rec.Id, ImGui::GetWindowPos(), ImVec2(ImGui::GetWindowPos().x + Size.x, ImGui::GetWindowPos().y + Size.y));
 
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
         (ImGui::IsMouseClicked(0) || ImGui::IsMouseClicked(1) || ImGui::IsMouseClicked(2)))

@@ -28,6 +28,8 @@
 #include "LayoutDebug.h"
 #include "LiveView.h"
 #include "NightlyBuild.h"
+#include "PeerLinks.h"
+#include "PeerVeins.h"
 #include "ProjectLog.h"
 #include "ProjectLogWindow.h"
 #include "ProjectSettingsWindow.h"
@@ -85,6 +87,12 @@ private:
     void SendPrompt(Session& CurrentSession, const std::string& Text);
     void DrawReview();
     void PollScreenshots(Session& CurrentSession);
+    // ---- session-to-session messages, shown as veins along the pane borders ----
+    void NotePeerMessages(const Session& CurrentSession, TranscriptScanner& Scanner);
+    std::string PeerDisplayName(const std::string& Id) const;
+    bool IsPeerBusy(const std::string& Id) const;
+    void DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const float Gap);
+    void DrawWaitingPills(ImDrawList* const DrawList, const PeerVeins::Box& Pane, const std::vector<std::pair<std::string, ImU32>>& Labels);
     void RequestDeleteAllArchived();
     void BuildAndRun(Session& CurrentSession);
     // ---- auto mode: the user is away, so sessions keep going instead of stopping to ask ----
@@ -532,6 +540,8 @@ private:
     void RequestCloseUnopenedSessions(const std::string& ProjectId);
     void RemoveProject(const std::string& Id);
     bool AddProjectPath(const std::string& Path, std::string& Err, std::string* OutId = nullptr);
+    std::string GeneralFolderPath() const;
+    void StartGeneralSession();
     void OnStatus(Session& CurrentSession, Status OldStatus, Status NewStatus, double BusySeconds);
     void MarkDirty() { Dirty_ = true; }
     void SetTabFilter(const std::string& ProjectId)
@@ -846,6 +856,9 @@ private:
     std::set<std::string> LiveViewIds_;           // sessions showing their live view
     std::map<std::string, double> LiveFrameCheckAt_;
     std::map<std::string, LiveView::Frame> LiveFrames_;
+
+    PeerLinks PeerLinks_;
+    PeerVeins PeerVeins_;
 
     ProjectLogWindow ProjectLogWindow_;
     ProjectSettingsWindow ProjectSettingsWindow_;

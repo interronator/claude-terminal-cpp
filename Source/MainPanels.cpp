@@ -25,6 +25,7 @@ void App::DrawMain(const float Width, const float Height)
 {
     const float Scale = UiScale_;
     ImGui::BeginChild("##main", ImVec2(Width, Height), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    PeerVeins_.BeginFrame();
     LayoutDebug_.Sample("main.width", ImGui::GetWindowWidth());
     LayoutDebug_.Sample("main.x", ImGui::GetWindowPos().x);
     DrawToolbar();
@@ -46,6 +47,7 @@ void App::DrawMain(const float Width, const float Height)
     int const Count = (int)Ids.size();
     int const Columns = Count <= 2 ? Count : (int)std::ceil(std::sqrt((double)Count));
     int const Rows = (Count + Columns - 1) / Columns;
+    const ImVec2 PanesMin = ImGui::GetCursorScreenPos();
     ImVec2 Origin = ImGui::GetCursorPos();
     Origin.x += Gap;
     Origin.y += Gap;
@@ -68,6 +70,7 @@ void App::DrawMain(const float Width, const float Height)
         ImVec2 const Pos(Origin.x + Col * (CellWidth + Gap), Origin.y + Row * (CellHeight + Gap));
         DrawPane(*CurrentSession, Pos, ImVec2(Width, CellHeight), Index);
     }
+    DrawPeerOverlay(PanesMin, ImVec2(PanesMin.x + Avail.x, PanesMin.y + Avail.y), Gap);
     ImGui::EndChild();
 }
 

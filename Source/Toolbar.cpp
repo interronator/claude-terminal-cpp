@@ -311,6 +311,7 @@ void App::DrawToolbar()
                 ImGui::SetTooltip("Hide tab");
             }
             DrawList->AddRectFilled(ChipPos, ImVec2(ChipPos.x + ChipWidth, ChipPos.y + ImGui::GetFrameHeight()), ChipBgColorU32_, 6);
+            PeerVeins_.AddChip(ChildSession->Rec.Id, ChipPos, ImVec2(ChipPos.x + ChipWidth, ChipPos.y + ImGui::GetFrameHeight()));
             if (IsActiveChip == true)
             {
                 DrawList->AddRect(ChipPos, ImVec2(ChipPos.x + ChipWidth, ChipPos.y + ImGui::GetFrameHeight()), AccentColor_, 6);

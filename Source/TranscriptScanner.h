@@ -105,6 +105,23 @@ public:
         return Running;
     }
 
+    // A message this session sent to, or received from, another Claude session on this machine.
+    struct PeerMessage
+    {
+        std::string PeerName;
+        std::string PeerAddress;  // the other session's message pipe, when the transcript names it
+        bool Outgoing = false;
+        std::time_t SentAt = 0;
+    };
+
+    // Messages seen since the last call, oldest first.
+    std::vector<PeerMessage> TakePeerMessages()
+    {
+        std::vector<PeerMessage> Taken;
+        Taken.swap(PeerMessages_);
+        return Taken;
+    }
+
     // The text of Claude's most recent reply in the main conversation (empty before its first reply).
     const std::string& LastAssistantText() const { return LastAssistantText_; }
 
@@ -426,6 +443,61 @@ private:
         }
     }
 
+    // Sent messages are SendMessage tool calls; received ones are user turns whose origin is another session.
+    void RecordPeerMessage(const nlohmann::json& Entry)
+    {
+        static constexpr const char* ADDRESS_PREFIX = "uds:";
+        if (Entry.value("isSidechain", false) == true)
+        {
+            return;
+        }
+        const std::time_t When = ParseTimestamp(Entry.value("timestamp", ""));
+        if (When == 0)
+        {
+            return;
+        }
+        const nlohmann::json::const_iterator Origin = Entry.find("origin");
+        if (Entry.value("type", "") == "user" && Origin != Entry.end() && Origin->is_object() == true && Origin->value("kind", "") == "peer")
+        {
+            std::string Address = Origin->value("from", "");
+            if (Address.rfind(ADDRESS_PREFIX, 0) == 0)
+            {
+                Address = Address.substr(std::string(ADDRESS_PREFIX).size());
+            }
+            PeerMessages_.push_back({Origin->value("name", ""), Address, false, When});
+            return;
+        }
+        const nlohmann::json::const_iterator Message = Entry.find("message");
+        if (Message == Entry.end() || Message->is_object() == false || Message->value("role", "") != "assistant")
+        {
+            return;
+        }
+        const nlohmann::json::const_iterator Content = Message->find("content");
+        if (Content == Message->end() || Content->is_array() == false)
+        {
+            return;
+        }
+        for (const nlohmann::json& Block : *Content)
+        {
+            if (Block.is_object() == false || Block.value("type", "") != "tool_use" || Block.value("name", "") != "SendMessage")
+            {
+                continue;
+            }
+            const nlohmann::json::const_iterator Input = Block.find("input");
+            if (Input == Block.end() || Input->is_object() == false || Input->contains("to") == false || (*Input)["to"].is_string() == false)
+            {
+                continue;
+            }
+            const std::string Target = (*Input)["to"].get<std::string>();
+            if (Target.rfind(ADDRESS_PREFIX, 0) == 0)
+            {
+                PeerMessages_.push_back({std::string(), Target.substr(std::string(ADDRESS_PREFIX).size()), true, When});
+                continue;
+            }
+            PeerMessages_.push_back({Target, std::string(), true, When});
+        }
+    }
+
     struct Candidate
     {
         std::string Path;
@@ -612,6 +684,7 @@ private:
             return;
         }
         RecordCommands(Entry);
+        RecordPeerMessage(Entry);
         if (Entry.contains("message") == false)
         {
             return;
@@ -831,4 +904,5 @@ private:
     std::string LastAssistantText_;
     std::map<std::string, ActiveCommand> Commands_;  // tool_use id (or "task:<id>") -> running command
     std::set<std::string> EndedTasks_;
+    std::vector<PeerMessage> PeerMessages_;
 };

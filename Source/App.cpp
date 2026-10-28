@@ -443,6 +443,7 @@ void App::CloseSession(const std::string& Id, int WorktreeAction)
     ScreenshotFeed_.RemoveSession(Id);
     TranscriptScanners_.erase(Id);
     ScreenshotPollAt_.erase(Id);
+    PeerLinks_.Forget(Id);
     const Project* const Owner = FindProject(CurrentSession->Rec.ProjectId);
     State_.Archive.push_back({CurrentSession->Rec.Id, CurrentSession->Rec.Name, Owner != nullptr ? Owner->Name : std::string(), CurrentSession->Rec});
     std::string Warning;
@@ -736,7 +737,13 @@ double App::FrameWaitSeconds() const
 {
     constexpr double ANIMATION_WAIT_SECONDS = 1.0 / 30.0;
     constexpr double IDLE_WAIT_SECONDS = 0.1;
+    constexpr double WAITING_LINE_WAIT_SECONDS = 1.0 / 15.0;
     if (Toasts_.empty() == false)
+    {
+        return ANIMATION_WAIT_SECONDS;
+    }
+    const double Wall = PeerLinks::WallNow();
+    if (PeerLinks_.IsPulsing(Wall) == true)
     {
         return ANIMATION_WAIT_SECONDS;
     }
@@ -747,7 +754,7 @@ double App::FrameWaitSeconds() const
             return ANIMATION_WAIT_SECONDS;
         }
     }
-    return IDLE_WAIT_SECONDS;
+    return PeerLinks_.AnyWaiting(Wall) == true ? WAITING_LINE_WAIT_SECONDS : IDLE_WAIT_SECONDS;
 }
 
 // ---------------------------------------------------------------------------------------------

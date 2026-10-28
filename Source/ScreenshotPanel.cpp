@@ -42,6 +42,7 @@ void App::PollScreenshots(Session& CurrentSession)
     const std::string OwnDirectory = Tag.empty() == true ? std::string() : ScreenshotFinder::SessionShotDirectory(SessionProjectDir(CurrentSession), Tag).string();
     TranscriptScanner& Scanner = TranscriptScanners_[Id];
     const std::vector<TranscriptScanner::Shot> Shots = Scanner.Poll(CurrentSession.Rec.ClaudeSessionId, CurrentSession.Rec.Cwd, OwnDirectory, Tag, Now_);
+    NotePeerMessages(CurrentSession, Scanner);
     CurrentSession.BackgroundTasks = CurrentSession.IsRunning() == true ? Scanner.RunningBackgroundTasks(CurrentSession.LaunchedAt) : 0;
     RunningCommands_[Id] = CurrentSession.IsRunning() == true ? Scanner.RunningCommands(CurrentSession.LaunchedAt) : std::vector<TranscriptScanner::ActiveCommand>();
     for (const TranscriptScanner::Shot& Found : Shots)

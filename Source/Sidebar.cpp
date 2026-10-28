@@ -95,6 +95,14 @@ void App::DrawSidebar(float Width)
         OpenModal(Modal::AddProject);
     }
     ImGui::PopStyleColor(4);
+    if (ImGui::Button("+ General session", ImVec2(-1, 0)))
+    {
+        StartGeneralSession();
+    }
+    if (ImGui::IsItemHovered() == true)
+    {
+        ImGui::SetTooltip("Start Claude without picking a project. It works in %s.", GeneralFolderPath().c_str());
+    }
     ImGui::Spacing();
 
     const float FooterHeight = ImGui::GetTextLineHeightWithSpacing() * 3.2f + ImGui::GetFrameHeightWithSpacing();

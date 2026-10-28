@@ -38,6 +38,8 @@ public:
     bool Selecting = false, HasSelection = false;
     long long SelectionStartRow = 0, SelectionEndRow = 0;
     int SelectionStartCol = 0, SelectionEndCol = 0;
+    bool ReportingDrag = false;  // left button went down while the program had mouse reporting on
+    int ReportedRow = -1, ReportedCol = -1;
 
     bool InputSelected = false;  // the current selection is the whole prompt text (Ctrl+A), so edits act on it
     bool FindOpen = false, FindFocus = false, FindHasMatch = false, FindNoMatch = false;
