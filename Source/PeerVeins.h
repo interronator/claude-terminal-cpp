@@ -9,7 +9,7 @@
 #include "UiHelpers.h"
 
 // Draws a pulsing "vein" through the gaps between two session panes while they message each other. The vein runs
-// from a corner of the sender to a corner of the receiver, and its bulges travel from sender to receiver.
+// from the middle of one edge of the sender to the middle of one edge of the receiver, and its bulges travel from sender to receiver.
 class PeerVeins
 {
 public:
@@ -45,29 +45,79 @@ public:
         return Found != Chips_.end() ? &Found->second : nullptr;
     }
 
-    static constexpr int TOP_LEFT = 0;
-    static constexpr int TOP_RIGHT = 1;
-    static constexpr int BOTTOM_RIGHT = 2;
-    static constexpr int BOTTOM_LEFT = 3;
-    static constexpr int CORNER_COUNT = 4;
+    static constexpr int TOP = 0;
+    static constexpr int RIGHT = 1;
+    static constexpr int BOTTOM = 2;
+    static constexpr int LEFT = 3;
+    static constexpr int EDGE_COUNT = 4;
 
-    // Inflate moves the corner out from the box so the vein runs in the gap beside its border.
-    static ImVec2 CornerOf(const Box& Source, const float Inflate, const int Corner)
+    // Inflate moves the point out from the box so the vein runs in the gap beside its border.
+    static ImVec2 EdgeCenterOf(const Box& Source, const float Inflate, const int Edge)
     {
-        const bool Right = Corner == TOP_RIGHT || Corner == BOTTOM_RIGHT;
-        const bool Bottom = Corner == BOTTOM_RIGHT || Corner == BOTTOM_LEFT;
-        return ImVec2(Right == true ? Source.Max.x + Inflate : Source.Min.x - Inflate, Bottom == true ? Source.Max.y + Inflate : Source.Min.y - Inflate);
+        const ImVec2 Center((Source.Min.x + Source.Max.x) * 0.5f, (Source.Min.y + Source.Max.y) * 0.5f);
+        switch (Edge)
+        {
+            case TOP: return ImVec2(Center.x, Source.Min.y - Inflate);
+            case RIGHT: return ImVec2(Source.Max.x + Inflate, Center.y);
+            case BOTTOM: return ImVec2(Center.x, Source.Max.y + Inflate);
+            default: return ImVec2(Source.Min.x - Inflate, Center.y);
+        }
     }
 
-    // From the sender's corner along its own row or column line, then along the receiver's, to the receiver's corner.
-    // Grid gaps are continuous along those lines, so the vein never crosses a pane.
-    void Draw(ImDrawList* const DrawList, const Box& From, const float FromInflate, const int FromCorner, const Box& To, const float ToInflate, const int ToCorner,
-              const Flow& Current, const double Time, const float Scale) const
+    // A top or bottom anchor sits on a row line and a left or right one on a column line. The route leaves along the
+    // sender's line, turns onto a column or row line at a side of one of the two boxes, and arrives along the
+    // receiver's line. Grid gaps are continuous along those lines, so the vein never crosses a pane.
+    static std::vector<ImVec2> Route(const Box& From, const float FromInflate, const int FromEdge, const Box& To, const float ToInflate, const int ToEdge)
     {
-        const ImVec2 Start = CornerOf(From, FromInflate, FromCorner);
-        const ImVec2 End = CornerOf(To, ToInflate, ToCorner);
-        const ImVec2 Bend = IsSideways(From, To) == true ? ImVec2(End.x, Start.y) : ImVec2(Start.x, End.y);
-        DrawBranch(DrawList, {Start, Bend, End}, Current, Time, Scale);
+        const ImVec2 Start = EdgeCenterOf(From, FromInflate, FromEdge);
+        const ImVec2 End = EdgeCenterOf(To, ToInflate, ToEdge);
+        const bool StartOnRow = FromEdge == TOP || FromEdge == BOTTOM;
+        const bool EndOnRow = ToEdge == TOP || ToEdge == BOTTOM;
+        if (StartOnRow != EndOnRow)
+        {
+            const ImVec2 Bend = StartOnRow == true ? ImVec2(End.x, Start.y) : ImVec2(Start.x, End.y);
+            return {Start, Bend, End};
+        }
+        const Box Outer = {ImVec2(From.Min.x - FromInflate, From.Min.y - FromInflate), ImVec2(From.Max.x + FromInflate, From.Max.y + FromInflate)};
+        const Box Inner = {ImVec2(To.Min.x - ToInflate, To.Min.y - ToInflate), ImVec2(To.Max.x + ToInflate, To.Max.y + ToInflate)};
+        const float Choices[4] = {StartOnRow == true ? Outer.Min.x : Outer.Min.y, StartOnRow == true ? Outer.Max.x : Outer.Max.y,
+                                  StartOnRow == true ? Inner.Min.x : Inner.Min.y, StartOnRow == true ? Inner.Max.x : Inner.Max.y};
+        const float StartAlong = StartOnRow == true ? Start.x : Start.y;
+        const float EndAlong = StartOnRow == true ? End.x : End.y;
+        float Turn = Choices[0];
+        for (const float Choice : Choices)
+        {
+            if (std::fabs(StartAlong - Choice) + std::fabs(Choice - EndAlong) < std::fabs(StartAlong - Turn) + std::fabs(Turn - EndAlong))
+            {
+                Turn = Choice;
+            }
+        }
+        if (StartOnRow == true)
+        {
+            return {Start, ImVec2(Turn, Start.y), ImVec2(Turn, End.y), End};
+        }
+        return {Start, ImVec2(Start.x, Turn), ImVec2(End.x, Turn), End};
+    }
+
+    static float RouteLength(const std::vector<ImVec2>& Points)
+    {
+        float Length = 0;
+        for (size_t Index = 1; Index < Points.size(); Index++)
+        {
+            Length += std::fabs(Points[Index].x - Points[Index - 1].x) + std::fabs(Points[Index].y - Points[Index - 1].y);
+        }
+        return Length;
+    }
+
+    void Draw(ImDrawList* const DrawList, const std::vector<ImVec2>& Points, const Flow& Current, const double Time, const float Scale) const
+    {
+        if (Points.empty() == true)
+        {
+            return;
+        }
+        DrawBranch(DrawList, Points, Current, Time, Scale);
+        DrawNode(DrawList, Points.front(), Current, Time, Scale, 0.0f);
+        DrawNode(DrawList, Points.back(), Current, Time, Scale, 1.0f);
     }
 
 private:
@@ -87,23 +137,6 @@ private:
         ImVec2 Normal;  // to the right of the direction of travel
         float Distance = 0;
     };
-
-    static bool IsSideways(const Box& From, const Box& To)
-    {
-        const bool RowsOverlap = From.Min.y < To.Max.y && To.Min.y < From.Max.y;
-        const bool ColumnsOverlap = From.Min.x < To.Max.x && To.Min.x < From.Max.x;
-        if (RowsOverlap == true)
-        {
-            return true;
-        }
-        if (ColumnsOverlap == true)
-        {
-            return false;
-        }
-        const float DeltaX = (To.Min.x + To.Max.x - From.Min.x - From.Max.x) * 0.5f;
-        const float DeltaY = (To.Min.y + To.Max.y - From.Min.y - From.Max.y) * 0.5f;
-        return std::fabs(DeltaX) > std::fabs(DeltaY);
-    }
 
     static std::vector<Sample> Resample(const std::vector<ImVec2>& Points, const float Step)
     {
@@ -162,6 +195,33 @@ private:
             Value += 1.2f * Arriving * std::exp(-Offset * Offset);
         }
         return std::min(Value, 1.6f);
+    }
+
+    // A glowing dot at an end of the vein that breathes, with a ring rippling outwards. The receiver's end
+    // flares as each message pulse arrives there.
+    static void DrawNode(ImDrawList* const DrawList, const ImVec2 Center, const Flow& Current, const double Time, const float Scale, const float End)
+    {
+        const float Clock = static_cast<float>(Time);
+        float Arrival = 0;
+        for (const float Progress : Current.Packets)
+        {
+            const float Distance = (Progress - End) / 0.12f;
+            Arrival = std::max(Arrival, std::exp(-Distance * Distance));
+        }
+        const float Presence = std::max({Current.Strength, Current.Waiting == true ? 0.6f : 0.0f, Arrival});
+        if (Presence < 0.02f)
+        {
+            return;
+        }
+        const float Breath = 0.5f + 0.5f * std::sin(Clock * 3.0f + End * 1.6f);
+        const float Radius = (3.0f + 1.2f * Breath + 2.5f * Arrival) * Scale;
+        DrawList->AddCircleFilled(Center, Radius * 2.6f, UiHelpers::WithAlpha(Current.Color, static_cast<int>(Presence * (30 + 30 * Breath + 60 * Arrival))));
+        DrawList->AddCircleFilled(Center, Radius, UiHelpers::WithAlpha(Current.Color, static_cast<int>(Presence * 230)));
+        DrawList->AddCircleFilled(Center, Radius * 0.45f,
+                                  UiHelpers::WithAlpha(UiHelpers::LerpColor(Current.Color, IM_COL32_WHITE, 0.6f), static_cast<int>(Presence * (180 + 75 * Breath))));
+        const float Ripple = std::fmod(Clock * 0.8f + End * 0.5f, 1.0f);
+        DrawList->AddCircle(Center, Radius * (1.2f + 2.6f * Ripple), UiHelpers::WithAlpha(Current.Color, static_cast<int>(Presence * 170 * (1.0f - Ripple))), 0,
+                            1.3f * Scale);
     }
 
     static ImVec2 Offset(const Sample& Point, const float Amount)

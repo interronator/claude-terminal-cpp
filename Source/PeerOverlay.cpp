@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "PeerCorners.h"
+#include "PeerAnchors.h"
 #include "UiHelpers.h"
 
 void App::NotePeerMessages(const Session& CurrentSession, TranscriptScanner& Scanner)
@@ -69,7 +69,7 @@ void App::DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const fl
         bool OffScreen = false;
     };
     std::vector<Planned> Plans;
-    PeerCorners Corners;
+    PeerAnchors Anchors;
 
     for (PeerLinks::View& Link : Links)
     {
@@ -124,14 +124,14 @@ void App::DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const fl
         Plan.To = ToPane != nullptr ? *ToPane : Missing;
         Plan.FromInflate = FromPane != nullptr ? Gap * 0.5f : MissingInflate;
         Plan.ToInflate = ToPane != nullptr ? Gap * 0.5f : MissingInflate;
-        Corners.AddLink(Link.FromId, Link.ToId);
+        Anchors.AddLink(Link.FromId, Link.ToId);
         Plans.push_back(Plan);
     }
 
     for (const Planned& Plan : Plans)
     {
         const PeerLinks::View& Link = *Plan.Link;
-        const PeerCorners::Choice Corner = Corners.Pick(Link.FromId, Plan.From, Plan.FromInflate, Link.ToId, Plan.To, Plan.ToInflate, 24 * Scale);
+        const std::vector<ImVec2> Route = Anchors.Pick(Link.FromId, Plan.From, Plan.FromInflate, Link.ToId, Plan.To, Plan.ToInflate, 24 * Scale);
         PeerVeins::Flow Current;
         Current.Color = UiHelpers::SessionTint(Link.FromId);
         Current.Strength = Link.Strength;
@@ -141,7 +141,7 @@ void App::DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const fl
         {
             DrawList->PushClipRect(PanesMin, PanesMax, true);
         }
-        PeerVeins_.Draw(DrawList, Plan.From, Plan.FromInflate, Corner.FromCorner, Plan.To, Plan.ToInflate, Corner.ToCorner, Current, Now_, Scale);
+        PeerVeins_.Draw(DrawList, Route, Current, Now_, Scale);
         if (Plan.OffScreen == true)
         {
             DrawList->PopClipRect();
