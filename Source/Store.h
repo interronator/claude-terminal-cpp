@@ -119,6 +119,8 @@ struct Settings
     bool Notifications = true;
     bool GitHubEnabled = false;
     bool AutoStartWindow = false;
+    std::string DefaultModel;           // empty = Claude's own default
+    std::string DefaultPermissionMode;  // empty = Claude's own default
     int FontSize = 16;  // terminal font, in points at 100% scale
     int PaneTitleScale = 100;  // session title text size in the pane header, percent of the normal UI text
     ThemeColors Theme;

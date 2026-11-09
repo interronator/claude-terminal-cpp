@@ -122,6 +122,9 @@ public:
         return Taken;
     }
 
+    // When the user last typed a prompt into this session, as opposed to a tool result, a notice or another session's message.
+    std::time_t LastUserPromptAt() const { return LastUserPromptAt_; }
+
     // The text of Claude's most recent reply in the main conversation (empty before its first reply).
     const std::string& LastAssistantText() const { return LastAssistantText_; }
 
@@ -467,6 +470,11 @@ private:
             PeerMessages_.push_back({Origin->value("name", ""), Address, false, When});
             return;
         }
+        if (IsUserPrompt(Entry) == true)
+        {
+            LastUserPromptAt_ = std::max(LastUserPromptAt_, When);
+            return;
+        }
         const nlohmann::json::const_iterator Message = Entry.find("message");
         if (Message == Entry.end() || Message->is_object() == false || Message->value("role", "") != "assistant")
         {
@@ -496,6 +504,17 @@ private:
             }
             PeerMessages_.push_back({Target, std::string(), true, When});
         }
+    }
+
+    // Claude tags each turn with where it came from; tool results, notices and other sessions' messages aren't "human".
+    static bool IsUserPrompt(const nlohmann::json& Entry)
+    {
+        if (Entry.value("type", "") != "user")
+        {
+            return false;
+        }
+        const nlohmann::json::const_iterator Origin = Entry.find("origin");
+        return Origin != Entry.end() && Origin->is_object() == true && Origin->value("kind", "") == "human";
     }
 
     struct Candidate
@@ -905,4 +924,5 @@ private:
     std::map<std::string, ActiveCommand> Commands_;  // tool_use id (or "task:<id>") -> running command
     std::set<std::string> EndedTasks_;
     std::vector<PeerMessage> PeerMessages_;
+    std::time_t LastUserPromptAt_ = 0;
 };

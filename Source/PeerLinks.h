@@ -38,9 +38,14 @@ public:
     static std::string ExternalName(const std::string& Id) { return IsExternal(Id) == true ? Id.substr(std::string(EXTERNAL_PREFIX).size()) : Id; }
 
     // LocalByClaudeId maps each app session's Claude session id to its app session id.
-    void Note(const std::string& LocalId, const std::vector<TranscriptScanner::PeerMessage>& Messages, const std::map<std::string, std::string>& LocalByClaudeId)
+    void Note(const std::string& LocalId, const std::vector<TranscriptScanner::PeerMessage>& Messages, const std::map<std::string, std::string>& LocalByClaudeId,
+              const std::time_t LastUserPromptAt)
     {
         const double Now = WallNow();
+        if (LastUserPromptAt != 0)
+        {
+            PromptAt_[LocalId] = LastUserPromptAt;
+        }
         if (Now - RegistryReadAt_ > EXTERNAL_STATUS_REFRESH_SECONDS && WaitsOnExternal(Now) == true)
         {
             ReadRegistry(Now);
@@ -82,6 +87,7 @@ public:
             }
             ++Item;
         }
+        PromptAt_.erase(LocalId);
     }
 
     std::vector<View> Visible(const double Now) const
@@ -157,7 +163,7 @@ private:
     static constexpr size_t MAX_PACKETS = 4;
     static constexpr double TALK_HOLD_SECONDS = 30.0;
     static constexpr double TALK_FADE_SECONDS = 20.0;
-    static constexpr double WAIT_TIMEOUT_SECONDS = 20.0 * 60.0;
+    static constexpr double WAIT_TIMEOUT_SECONDS = 45.0;
     static constexpr double FORGET_AFTER_SECONDS = 2.0 * 3600.0;
     static constexpr double REGISTRY_REFRESH_SECONDS = 2.0;
     static constexpr double EXTERNAL_STATUS_REFRESH_SECONDS = 5.0;
@@ -200,6 +206,12 @@ private:
     bool IsWaiting(const std::pair<std::string, std::string>& Key, const Link& Data, const double Now) const
     {
         if (Now - static_cast<double>(Data.LastSentAt) > WAIT_TIMEOUT_SECONDS)
+        {
+            return false;
+        }
+        // Once the user has given the sender something new to do, it has moved on from the message.
+        const std::map<std::string, std::time_t>::const_iterator Prompted = PromptAt_.find(Key.first);
+        if (Prompted != PromptAt_.end() && Prompted->second > Data.LastSentAt)
         {
             return false;
         }
@@ -370,6 +382,7 @@ private:
     }
 
     std::map<std::pair<std::string, std::string>, Link> Links_;  // (sender, receiver) -> activity
+    std::map<std::string, std::time_t> PromptAt_;  // app session id -> when the user last typed a prompt into it
     std::map<std::string, Registered> ByName_;
     std::map<std::string, Registered> ByAddress_;
     double RegistryReadAt_ = -1.0e9;

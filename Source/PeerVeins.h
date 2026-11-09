@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <string>
 #include <vector>
@@ -8,8 +9,8 @@
 #include "imgui.h"
 #include "UiHelpers.h"
 
-// Draws a pulsing "vein" through the gaps between two session panes while they message each other. The vein runs
-// from the middle of one edge of the sender to the middle of one edge of the receiver, and its bulges travel from sender to receiver.
+// Draws a pulsing "vein" between two session panes while they message each other. The vein is a free curve from the
+// top middle of the sender's window to the top middle of the receiver's, and its bulges travel from sender to receiver.
 class PeerVeins
 {
 public:
@@ -39,74 +40,58 @@ public:
         const std::map<std::string, Box>::const_iterator Found = Panes_.find(Id);
         return Found != Panes_.end() ? &Found->second : nullptr;
     }
+    float TopOfPanes(const float Fallback) const
+    {
+        float Top = Fallback;
+        for (const std::pair<const std::string, Box>& Pane : Panes_)
+        {
+            Top = std::min(Top, Pane.second.Min.y);
+        }
+        return Top;
+    }
     const Box* FindChip(const std::string& Id) const
     {
         const std::map<std::string, Box>::const_iterator Found = Chips_.find(Id);
         return Found != Chips_.end() ? &Found->second : nullptr;
     }
 
-    static constexpr int TOP = 0;
-    static constexpr int RIGHT = 1;
-    static constexpr int BOTTOM = 2;
-    static constexpr int LEFT = 3;
-    static constexpr int EDGE_COUNT = 4;
-
-    // Inflate moves the point out from the box so the vein runs in the gap beside its border.
-    static ImVec2 EdgeCenterOf(const Box& Source, const float Inflate, const int Edge)
+    static ImVec2 TopMiddle(const Box& Source)
     {
-        const ImVec2 Center((Source.Min.x + Source.Max.x) * 0.5f, (Source.Min.y + Source.Max.y) * 0.5f);
-        switch (Edge)
-        {
-            case TOP: return ImVec2(Center.x, Source.Min.y - Inflate);
-            case RIGHT: return ImVec2(Source.Max.x + Inflate, Center.y);
-            case BOTTOM: return ImVec2(Center.x, Source.Max.y + Inflate);
-            default: return ImVec2(Source.Min.x - Inflate, Center.y);
-        }
+        return ImVec2((Source.Min.x + Source.Max.x) * 0.5f, Source.Min.y);
     }
 
-    // A top or bottom anchor sits on a row line and a left or right one on a column line. The route leaves along the
-    // sender's line, turns onto a column or row line at a side of one of the two boxes, and arrives along the
-    // receiver's line. Grid gaps are continuous along those lines, so the vein never crosses a pane.
-    static std::vector<ImVec2> Route(const Box& From, const float FromInflate, const int FromEdge, const Box& To, const float ToInflate, const int ToEdge)
+    // A cubic Bezier whose handles point straight up from both ends, so the line leaves each window upwards and arches across.
+    // The arch never rises above MinY: when there is no room above two level ends it dips down into the panes instead.
+    // A toolbar chip sits above the panes, so with EndFromBelow the line rises into the chip's bottom edge instead.
+    static std::vector<ImVec2> Curve(const ImVec2 Start, const ImVec2 End, const bool EndFromBelow, const float MinY, const float Scale)
     {
-        const ImVec2 Start = EdgeCenterOf(From, FromInflate, FromEdge);
-        const ImVec2 End = EdgeCenterOf(To, ToInflate, ToEdge);
-        const bool StartOnRow = FromEdge == TOP || FromEdge == BOTTOM;
-        const bool EndOnRow = ToEdge == TOP || ToEdge == BOTTOM;
-        if (StartOnRow != EndOnRow)
+        const float Distance = std::sqrt((End.x - Start.x) * (End.x - Start.x) + (End.y - Start.y) * (End.y - Start.y));
+        const float Lift = std::clamp(Distance * 0.35f, MIN_LIFT * Scale, MAX_LIFT * Scale);
+        const float Higher = std::min(Start.y, End.y);
+        const float Lower = std::max(Start.y, End.y);
+        float Top = Higher - Lift;
+        if (Top < MinY)
         {
-            const ImVec2 Bend = StartOnRow == true ? ImVec2(End.x, Start.y) : ImVec2(Start.x, End.y);
-            return {Start, Bend, End};
+            const bool Level = Lower - Higher < MIN_LIFT * Scale;
+            const bool NoRoomAbove = Higher - MinY < MIN_LIFT * Scale;
+            Top = Level == true && NoRoomAbove == true ? Lower + Lift : MinY;
         }
-        const Box Outer = {ImVec2(From.Min.x - FromInflate, From.Min.y - FromInflate), ImVec2(From.Max.x + FromInflate, From.Max.y + FromInflate)};
-        const Box Inner = {ImVec2(To.Min.x - ToInflate, To.Min.y - ToInflate), ImVec2(To.Max.x + ToInflate, To.Max.y + ToInflate)};
-        const float Choices[4] = {StartOnRow == true ? Outer.Min.x : Outer.Min.y, StartOnRow == true ? Outer.Max.x : Outer.Max.y,
-                                  StartOnRow == true ? Inner.Min.x : Inner.Min.y, StartOnRow == true ? Inner.Max.x : Inner.Max.y};
-        const float StartAlong = StartOnRow == true ? Start.x : Start.y;
-        const float EndAlong = StartOnRow == true ? End.x : End.y;
-        float Turn = Choices[0];
-        for (const float Choice : Choices)
+        const ImVec2 StartHandle(Start.x, EndFromBelow == true ? Start.y - Lift : Top);
+        const ImVec2 EndHandle(End.x, EndFromBelow == true ? End.y + Lift * 0.5f : Top);
+        std::vector<ImVec2> Points;
+        Points.reserve(CURVE_POINTS + 1);
+        for (int Index = 0; Index <= CURVE_POINTS; Index++)
         {
-            if (std::fabs(StartAlong - Choice) + std::fabs(Choice - EndAlong) < std::fabs(StartAlong - Turn) + std::fabs(Turn - EndAlong))
-            {
-                Turn = Choice;
-            }
+            const float Amount = static_cast<float>(Index) / static_cast<float>(CURVE_POINTS);
+            const float Rest = 1.0f - Amount;
+            const float StartWeight = Rest * Rest * Rest;
+            const float StartHandleWeight = 3.0f * Rest * Rest * Amount;
+            const float EndHandleWeight = 3.0f * Rest * Amount * Amount;
+            const float EndWeight = Amount * Amount * Amount;
+            Points.push_back(ImVec2(StartWeight * Start.x + StartHandleWeight * StartHandle.x + EndHandleWeight * EndHandle.x + EndWeight * End.x,
+                                    StartWeight * Start.y + StartHandleWeight * StartHandle.y + EndHandleWeight * EndHandle.y + EndWeight * End.y));
         }
-        if (StartOnRow == true)
-        {
-            return {Start, ImVec2(Turn, Start.y), ImVec2(Turn, End.y), End};
-        }
-        return {Start, ImVec2(Start.x, Turn), ImVec2(End.x, Turn), End};
-    }
-
-    static float RouteLength(const std::vector<ImVec2>& Points)
-    {
-        float Length = 0;
-        for (size_t Index = 1; Index < Points.size(); Index++)
-        {
-            Length += std::fabs(Points[Index].x - Points[Index - 1].x) + std::fabs(Points[Index].y - Points[Index - 1].y);
-        }
-        return Length;
+        return Points;
     }
 
     void Draw(ImDrawList* const DrawList, const std::vector<ImVec2>& Points, const Flow& Current, const double Time, const float Scale) const
@@ -122,6 +107,9 @@ public:
 
 private:
     static constexpr float STEP = 4.0f;
+    static constexpr int CURVE_POINTS = 32;
+    static constexpr float MIN_LIFT = 40.0f;
+    static constexpr float MAX_LIFT = 160.0f;
     static constexpr float LANE_OFFSET = 1.5f;  // keeps A->B and B->A apart: each runs on the right of its own travel
     static constexpr float WAVE_LENGTH = 150.0f;
     static constexpr float WAVE_SPEED = 210.0f;

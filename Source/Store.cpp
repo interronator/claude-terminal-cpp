@@ -102,6 +102,8 @@ State Store::ParseState(const json& Root)
         Loaded.AppSettings.ClaudeCommand = SettingsJson.value("claudeCommand", "claude");
         Loaded.AppSettings.Notifications = SettingsJson.value("notifications", true);
         Loaded.AppSettings.AutoStartWindow = SettingsJson.value("autoStartWindow", false);
+        Loaded.AppSettings.DefaultModel = SettingsJson.value("defaultModel", std::string());
+        Loaded.AppSettings.DefaultPermissionMode = SettingsJson.value("defaultPermissionMode", std::string());
         Loaded.AppSettings.GitHubEnabled = SettingsJson.value("githubEnabled", false);
         Loaded.AppSettings.FontSize = SettingsJson.value("fontSize", 16);
         Loaded.AppSettings.PaneTitleScale = std::clamp(SettingsJson.value("paneTitleScale", 100), 70, 200);
@@ -240,6 +242,8 @@ bool Store::Save() const
     Root["settings"] = {{"claudeCommand", AppState.AppSettings.ClaudeCommand},
                         {"notifications", AppState.AppSettings.Notifications},
                         {"autoStartWindow", AppState.AppSettings.AutoStartWindow},
+                        {"defaultModel", AppState.AppSettings.DefaultModel},
+                        {"defaultPermissionMode", AppState.AppSettings.DefaultPermissionMode},
                         {"githubEnabled", AppState.AppSettings.GitHubEnabled},
                         {"fontSize", AppState.AppSettings.FontSize},
                         {"paneTitleScale", AppState.AppSettings.PaneTitleScale},

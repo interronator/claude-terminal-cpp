@@ -53,7 +53,7 @@ set(APP_SOURCES
   Source/Main.cpp Source/App.cpp Source/Session.cpp Source/Terminal.cpp
   Source/Git.cpp Source/Store.cpp
   Source/Account.cpp Source/Input.cpp Source/Modals.cpp Source/NightlyBuildWindow.cpp
-  Source/Pane.cpp Source/MainPanels.cpp Source/ReviewWindow.cpp
+  Source/Pane.cpp Source/MainPanels.cpp Source/ReviewWindow.cpp Source/SessionRequestsPoll.cpp
   Source/ScreenshotPanel.cpp Source/QuickSearch.cpp Source/Sidebar.cpp Source/TerminalView.cpp
   Source/Toolbar.cpp Source/StbImage.cpp Source/PeerOverlay.cpp Source/GeneralSession.cpp)
 if(WIN32)

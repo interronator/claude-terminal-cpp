@@ -27,6 +27,7 @@
 #include "imgui.h"
 #include "LayoutDebug.h"
 #include "LiveView.h"
+#include "ModelCatalog.h"
 #include "NightlyBuild.h"
 #include "PeerLinks.h"
 #include "PeerVeins.h"
@@ -35,6 +36,7 @@
 #include "ProjectSettingsWindow.h"
 #include "ScreenshotFeed.h"
 #include "Session.h"
+#include "SessionRequests.h"
 #include "Store.h"
 #include "TranscriptScanner.h"
 #include "UsageClient.h"
@@ -344,6 +346,10 @@ private:
                 Target.ExtraGuidance += " " + LiveView::Guidance(ProjectDir, ScreenshotFinder::SessionShotDirectory(ProjectDir, Tag).string(), Tag);
             }
         }
+        SessionRequests::EnsureInbox();
+        Target.LaunchModel = State_.AppSettings.DefaultModel;
+        Target.LaunchPermissionMode = State_.AppSettings.DefaultPermissionMode;
+        Target.ExtraGuidance += (Target.ExtraGuidance.empty() == true ? "" : " ") + SessionRequests::Guidance(Tag);
         return Target.Start(State_.AppSettings.ClaudeCommand, Cols, Rows, Now_, Err);
     }
     bool IsUnrealSession(const Session& Target)
@@ -547,6 +553,8 @@ private:
     void SetTabFilter(const std::string& ProjectId)
     {
         State_.Ui.TabFilterProjectId = ProjectId;
+    void PollSessionRequests();
+    std::string RequestProjectId(const Session* const Sender, const std::string& Cwd, std::string& Err);
         FilterExtraIds_.clear();
         MarkDirty();
     }
@@ -789,6 +797,9 @@ private:
     KeyBindings KeysEdit_;
     int KeyCaptureIndex_ = -1;
     int KeyCaptureEscapeFrame_ = -1;
+    std::string ModelEdit_;
+    ModelCatalog ModelCatalog_{std::filesystem::path(Store::DefaultPath()).parent_path() / "Models.json"};
+    std::string PermissionModeEdit_;
     std::string KeyCaptureError_;
     ThemeColors ThemeEdit_;
     std::map<std::string, std::array<char, 256>> SessionNameEdits_;
@@ -864,6 +875,7 @@ private:
     ProjectSettingsWindow ProjectSettingsWindow_;
 
     NightlyBuild NightlyBuild_;
+    SessionRequests SessionRequests_;
     std::string NightlyBuildId_;  // project whose nightly build window is open; empty when closed
     bool NightlyBuildFocus_ = false;
     double NightlyBuildCheckAt_ = 0;

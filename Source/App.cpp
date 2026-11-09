@@ -45,6 +45,7 @@ App::App(GLFWwindow* Window, Store& Store, float UiScale)
         Ui.Mode = "tile";
     }
     Session::Wake = [] { glfwPostEmptyEvent(); };
+    ModelCatalog_.Refresh(false, Session::Wake);
     CommandTiming_.Start(std::filesystem::path(Store::DefaultPath()).parent_path() / "command_durations.json", TranscriptScanner::ProjectsRoot());
 }
 
@@ -811,6 +812,7 @@ void App::Frame(double Now)
     }
     Focused_ = Focused;
 
+    PollSessionRequests();
     TickSessions(Now);
     EnsureActiveVisible();
 

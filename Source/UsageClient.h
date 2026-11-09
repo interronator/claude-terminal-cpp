@@ -28,23 +28,7 @@ public:
     static UsageInfo Fetch()
     {
         UsageInfo Out;
-        std::ifstream In(CredentialsPath());
-        if (In.good() == false)
-        {
-            Out.Error = NOT_LOGGED_IN;
-            return Out;
-        }
-        nlohmann::json Credentials = nlohmann::json::parse(In, nullptr, /*allow_exceptions=*/false);
-        std::string Token;
-        if (Credentials.is_discarded() == false && Credentials.is_object() == true && Credentials.contains("claudeAiOauth") == true &&
-            Credentials["claudeAiOauth"].is_object() == true)
-        {
-            const nlohmann::json& OauthJson = Credentials["claudeAiOauth"];
-            if (OauthJson.contains("accessToken") == true && OauthJson["accessToken"].is_string() == true)
-            {
-                Token = OauthJson["accessToken"].get<std::string>();
-            }
-        }
+        const std::string Token = AccessToken();
         if (Token.empty())
         {
             Out.Error = NOT_LOGGED_IN;
@@ -86,6 +70,28 @@ public:
         ReadBucket(Response, "seven_day", Out.HasWeekly, Out.WeeklyPct, Out.WeeklyResetsAt);
         Out.Ok = true;
         return Out;
+    }
+
+    // The Claude CLI's stored OAuth token, or empty when not logged in.
+    static std::string AccessToken()
+    {
+        std::ifstream In(CredentialsPath());
+        if (In.good() == false)
+        {
+            return std::string();
+        }
+        const nlohmann::json Credentials = nlohmann::json::parse(In, nullptr, /*allow_exceptions=*/false);
+        if (Credentials.is_discarded() == true || Credentials.is_object() == false || Credentials.contains("claudeAiOauth") == false ||
+            Credentials["claudeAiOauth"].is_object() == false)
+        {
+            return std::string();
+        }
+        const nlohmann::json& OauthJson = Credentials["claudeAiOauth"];
+        if (OauthJson.contains("accessToken") == false || OauthJson["accessToken"].is_string() == false)
+        {
+            return std::string();
+        }
+        return OauthJson["accessToken"].get<std::string>();
     }
 
 private:

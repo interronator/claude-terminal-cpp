@@ -459,6 +459,9 @@ void App::DrawToolbar()
         PaneTitleScaleEdit_ = State_.AppSettings.PaneTitleScale;
         NotifyEdit_ = State_.AppSettings.Notifications;
         AutoStartEdit_ = State_.AppSettings.AutoStartWindow;
+        ModelEdit_ = State_.AppSettings.DefaultModel;
+        ModelCatalog_.Refresh(false, Session::Wake);
+        PermissionModeEdit_ = State_.AppSettings.DefaultPermissionMode;
         GitHubEdit_ = State_.AppSettings.GitHubEnabled;
         KeysEdit_ = State_.AppSettings.Keys;
         KeyCaptureIndex_ = -1;

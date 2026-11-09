@@ -2,11 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <string>
 #include <vector>
 
-#include "PeerAnchors.h"
 #include "UiHelpers.h"
 
 void App::NotePeerMessages(const Session& CurrentSession, TranscriptScanner& Scanner)
@@ -21,7 +21,7 @@ void App::NotePeerMessages(const Session& CurrentSession, TranscriptScanner& Sca
             LocalByClaudeId[Candidate->Rec.ClaudeSessionId] = Candidate->Rec.Id;
         }
     }
-    PeerLinks_.Note(CurrentSession.Rec.Id, Messages, LocalByClaudeId);
+    PeerLinks_.Note(CurrentSession.Rec.Id, Messages, LocalByClaudeId, Scanner.LastUserPromptAt());
 }
 
 std::string App::PeerDisplayName(const std::string& Id) const
@@ -40,7 +40,7 @@ bool App::IsPeerBusy(const std::string& Id) const
     return Local->CurrentStatus == Status::Busy || Local->CurrentStatus == Status::Starting;
 }
 
-// Drawn in a child window over the panes that takes no mouse input, so the veins sit on top of the pane borders
+// Drawn in a child window over the panes that takes no mouse input, so the veins sit on top of the panes
 // without getting in the way of clicks.
 void App::DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const float Gap)
 {
@@ -59,18 +59,7 @@ void App::DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const fl
     ImDrawList* const DrawList = ImGui::GetWindowDrawList();
     std::map<std::string, std::vector<std::pair<std::string, ImU32>>> Pills;  // pane session id -> labels
 
-    struct Planned
-    {
-        const PeerLinks::View* Link = nullptr;
-        PeerVeins::Box From{};
-        PeerVeins::Box To{};
-        float FromInflate = 0;
-        float ToInflate = 0;
-        bool OffScreen = false;
-    };
-    std::vector<Planned> Plans;
-    PeerAnchors Anchors;
-
+    const float TopY = PeerVeins_.TopOfPanes(PanesMin.y) - Gap * 0.5f;
     for (PeerLinks::View& Link : Links)
     {
         // A sender that went back to work isn't waiting on anyone, whatever the message history says.
@@ -98,51 +87,52 @@ void App::DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const fl
             }
         }
 
-        // A peer without a pane leads to its toolbar chip, or, when it has none either, off the top of the pane area.
-        const PeerVeins::Box* const Shown = FromPane != nullptr ? FromPane : ToPane;
-        const std::string& MissingId = FromPane != nullptr ? Link.ToId : Link.FromId;
-        PeerVeins::Box Missing{};
-        float MissingInflate = 2 * Scale;
-        Planned Plan;
-        Plan.Link = &Link;
-        if (FromPane == nullptr || ToPane == nullptr)
+        std::vector<ImVec2> Route;
+        bool OffScreen = false;
+        if (FromPane != nullptr && ToPane != nullptr)
         {
-            const PeerVeins::Box* const Chip = PeerVeins_.FindChip(MissingId);
+            // Both directions of a pair share one curve, reversed; the lane offset in the vein keeps them apart.
+            const bool Swapped = Link.ToId < Link.FromId;
+            Route = PeerVeins::Curve(PeerVeins::TopMiddle(Swapped == true ? *ToPane : *FromPane), PeerVeins::TopMiddle(Swapped == true ? *FromPane : *ToPane), false,
+                                     PanesMin.y, Scale);
+            if (Swapped == true)
+            {
+                std::reverse(Route.begin(), Route.end());
+            }
+        }
+        else
+        {
+            // A peer without a pane leads to its toolbar chip, or, when it has none either, off the top of the pane area.
+            const PeerVeins::Box& Shown = FromPane != nullptr ? *FromPane : *ToPane;
+            const PeerVeins::Box* const Chip = PeerVeins_.FindChip(FromPane != nullptr ? Link.ToId : Link.FromId);
+            const ImVec2 Start = PeerVeins::TopMiddle(Shown);
+            ImVec2 End(Start.x, PanesMin.y - 70 * Scale);
             if (Chip != nullptr)
             {
-                Missing = *Chip;
+                End = ImVec2((Chip->Min.x + Chip->Max.x) * 0.5f, Chip->Max.y + 2 * Scale);
             }
             else
             {
-                const float CenterX = (Shown->Min.x + Shown->Max.x) * 0.5f;
-                Missing = {ImVec2(CenterX - 1, PanesMin.y - 80 * Scale), ImVec2(CenterX + 1, PanesMin.y - 60 * Scale)};
-                MissingInflate = 0;
-                Plan.OffScreen = true;
+                OffScreen = true;
+            }
+            Route = PeerVeins::Curve(Start, End, true, std::numeric_limits<float>::lowest(), Scale);
+            if (FromPane == nullptr)
+            {
+                std::reverse(Route.begin(), Route.end());
             }
         }
-        Plan.From = FromPane != nullptr ? *FromPane : Missing;
-        Plan.To = ToPane != nullptr ? *ToPane : Missing;
-        Plan.FromInflate = FromPane != nullptr ? Gap * 0.5f : MissingInflate;
-        Plan.ToInflate = ToPane != nullptr ? Gap * 0.5f : MissingInflate;
-        Anchors.AddLink(Link.FromId, Link.ToId);
-        Plans.push_back(Plan);
-    }
 
-    for (const Planned& Plan : Plans)
-    {
-        const PeerLinks::View& Link = *Plan.Link;
-        const std::vector<ImVec2> Route = Anchors.Pick(Link.FromId, Plan.From, Plan.FromInflate, Link.ToId, Plan.To, Plan.ToInflate, 24 * Scale);
         PeerVeins::Flow Current;
         Current.Color = UiHelpers::SessionTint(Link.FromId);
         Current.Strength = Link.Strength;
         Current.Packets = Link.Packets;
         Current.Waiting = Link.Waiting;
-        if (Plan.OffScreen == true)
+        if (OffScreen == true)
         {
-            DrawList->PushClipRect(PanesMin, PanesMax, true);
+            DrawList->PushClipRect(ImVec2(PanesMin.x, TopY - Gap), PanesMax, true);
         }
         PeerVeins_.Draw(DrawList, Route, Current, Now_, Scale);
-        if (Plan.OffScreen == true)
+        if (OffScreen == true)
         {
             DrawList->PopClipRect();
         }

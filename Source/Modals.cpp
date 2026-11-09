@@ -13,6 +13,7 @@
 #include "Git.h"
 #include "BuildScripts.h"
 #include "ImageCache.h"
+#include "SessionDefaults.h"
 #include "Platform.h"
 #include "Style.h"
 #include "UiHelpers.h"
@@ -363,6 +364,15 @@ void App::DrawSettingsModal()
     ImGui::TextDisabled("Claude command (add flags, e.g.  claude --model opus)");
     ImGui::SetNextItemWidth(Full);
     ImGui::InputText("##cmd", CommandBuffer_, sizeof CommandBuffer_);
+    ImGui::TextDisabled("Model for new sessions");
+    ImGui::SetNextItemWidth(Full);
+    std::vector<SessionDefaults::Choice> LatestModels;
+    std::vector<SessionDefaults::Choice> OlderModels;
+    SessionDefaults::ModelChoices(ModelCatalog_.Snapshot(), LatestModels, OlderModels);
+    SessionDefaults::DrawCombo("##defaultModel", ModelEdit_, LatestModels, OlderModels);
+    ImGui::TextDisabled("Mode for new sessions");
+    ImGui::SetNextItemWidth(Full);
+    SessionDefaults::DrawCombo("##defaultMode", PermissionModeEdit_, SessionDefaults::Modes(), {});
     ImGui::TextDisabled("Terminal font size");
     ImGui::SetNextItemWidth(Full);
     ImGui::SliderInt("##fs", &FontSizeEdit_, 8, 32);
@@ -372,7 +382,7 @@ void App::DrawSettingsModal()
     ImGui::Checkbox("Desktop notifications when a background session needs you", &NotifyEdit_);
     ImGui::Checkbox("Start the 5-hour usage window as soon as it is free (sends a tiny Haiku message)", &AutoStartEdit_);
     ImGui::Checkbox("Use GitHub access (shows login status; needs the gh CLI)", &GitHubEdit_);
-    ImGui::TextDisabled("Command changes apply the next time a session starts.");
+    ImGui::TextDisabled("Command changes apply the next time a session starts. Model and mode apply to new conversations only.");
 
     ImGui::Separator();
     ImGui::TextUnformatted("Sessions");
@@ -444,6 +454,8 @@ void App::DrawSettingsModal()
         State_.AppSettings.ClaudeCommand = Command.empty() ? "claude" : Command;
         State_.AppSettings.Notifications = NotifyEdit_;
         State_.AppSettings.AutoStartWindow = AutoStartEdit_;
+        State_.AppSettings.DefaultModel = ModelEdit_;
+        State_.AppSettings.DefaultPermissionMode = PermissionModeEdit_;
         State_.AppSettings.Keys = KeysEdit_;
         State_.AppSettings.PaneTitleScale = PaneTitleScaleEdit_;
         if (GitHubEdit_ != State_.AppSettings.GitHubEnabled)

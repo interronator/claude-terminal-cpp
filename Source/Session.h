@@ -29,6 +29,8 @@ public:
     std::unique_ptr<Terminal> Term;
     std::string PendingPrompt;  // sent once Claude has finished starting up
     std::string ExtraGuidance;  // appended to the system prompt on launch
+    std::string LaunchModel;           // used only when a brand-new conversation starts
+    std::string LaunchPermissionMode;  // used only when a brand-new conversation starts
     std::time_t LaunchedAt = 0;  // wall-clock time the current Claude process started
     int BackgroundTasks = 0;     // background shells and monitors still running, from the transcript
 
