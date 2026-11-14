@@ -28,6 +28,12 @@ public:
     bool Attempted = false;  // auto-start already tried this run
     std::unique_ptr<Terminal> Term;
     std::string PendingPrompt;  // sent once Claude has finished starting up
+    double SubmitCheckAt = 0;   // when to check that the last auto-sent prompt was really submitted; 0 = no check pending
+    double SubmitStartedAt = 0;
+    double SubmitInputMark = 0;  // LastInputAt() right after the app's own sends; later input means the user typed
+    std::string SubmittedText;   // the prompt the app sent, used to tell it from text the user typed
+    double LastInputAt() const { return LastInput_; }
+    bool ClosePending = false;  // a child session said it is finished; closed once it settles to idle
     std::string ExtraGuidance;  // appended to the system prompt on launch
     std::string LaunchModel;           // used only when a brand-new conversation starts
     std::string LaunchPermissionMode;  // used only when a brand-new conversation starts

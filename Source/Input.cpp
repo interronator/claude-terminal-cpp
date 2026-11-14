@@ -346,6 +346,10 @@ void App::SendPrompt(Session& CurrentSession, const std::string& Text)
                               CurrentTerminal.EndPaste();
                           });
     CurrentSession.SendText("\r", Now, Callback);
+    CurrentSession.SubmitCheckAt = Now + 0.8;
+    CurrentSession.SubmitStartedAt = Now;
+    CurrentSession.SubmittedText = Text;
+    CurrentSession.SubmitInputMark = CurrentSession.LastInputAt();
 }
 
 void App::HandleKey(const InputEvent& CurrentEvent)
@@ -440,8 +444,7 @@ void App::HandleKey(const InputEvent& CurrentEvent)
             OpenModal(Modal::AddProject);
             return;
         }
-        ModalTarget_ = CurrentSession != nullptr ? CurrentSession->Rec.ProjectId : State_.Projects.front().Id;
-        OpenModal(Modal::NewSession);
+        BeginNewSession(CurrentSession != nullptr ? CurrentSession->Rec.ProjectId : State_.Projects.front().Id);
         return;
     }
     if (Keys.Matches(KeyAction::ToggleMaximize, CurrentKey, CurrentEvent.Mods) == true)

@@ -62,6 +62,11 @@ public:
         AppendFlag(Argv, "--permission-mode", Mode);
     }
 
+    static void AppendName(std::vector<std::string>& Argv, const std::string& Name)
+    {
+        AppendFlag(Argv, "--name", Name);
+    }
+
     // Older choices sit in a submenu at the bottom of the list, so the main list only shows the latest versions.
     static void DrawCombo(const char* const Id, std::string& Value, const std::vector<Choice>& Choices, const std::vector<Choice>& Older)
     {
@@ -74,11 +79,20 @@ public:
         {
             return;
         }
+        DrawChoiceList(Value, Choices, Older);
+        ImGui::EndCombo();
+    }
+
+    // The items inside an open combo or popup. Returns true when the user picked something different from Value.
+    static bool DrawChoiceList(std::string& Value, const std::vector<Choice>& Choices, const std::vector<Choice>& Older)
+    {
+        bool Changed = false;
         for (const Choice& Candidate : Choices)
         {
             const bool Selected = Value == Candidate.Value;
             if (ImGui::Selectable(Candidate.Label.c_str(), Selected) == true)
             {
+                Changed = Selected == false;
                 Value = Candidate.Value;
             }
             if (Selected == true)
@@ -86,23 +100,26 @@ public:
                 ImGui::SetItemDefaultFocus();
             }
         }
-        if (Older.empty() == false)
+        if (Older.empty() == true)
         {
-            ImGui::Separator();
-            if (ImGui::BeginMenu("Older versions") == true)
+            return Changed;
+        }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Older versions") == false)
+        {
+            return Changed;
+        }
+        for (const Choice& Candidate : Older)
+        {
+            if (ImGui::MenuItem(Candidate.Label.c_str(), nullptr, Value == Candidate.Value) == true)
             {
-                for (const Choice& Candidate : Older)
-                {
-                    if (ImGui::MenuItem(Candidate.Label.c_str(), nullptr, Value == Candidate.Value) == true)
-                    {
-                        Value = Candidate.Value;
-                        ImGui::CloseCurrentPopup();
-                    }
-                }
-                ImGui::EndMenu();
+                Changed = Value != Candidate.Value;
+                Value = Candidate.Value;
+                ImGui::CloseCurrentPopup();
             }
         }
-        ImGui::EndCombo();
+        ImGui::EndMenu();
+        return Changed;
     }
 
 private:
@@ -110,6 +127,10 @@ private:
     {
         static const std::vector<std::string> ORDER = {"fable", "opus", "sonnet", "haiku"};
         const std::vector<std::string>::const_iterator Found = std::find(ORDER.begin(), ORDER.end(), Family);
+        if (Found == ORDER.end())
+        {
+            return -1;  // a family we don't know yet is probably new, so it goes first (the stable sort keeps newest first)
+        }
         return static_cast<int>(Found - ORDER.begin());
     }
 

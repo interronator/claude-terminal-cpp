@@ -78,6 +78,11 @@ void App::DrawNightlyBuild()
                 DrawNightlyBuildJobs(*Owner);
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Build now") == true)
+            {
+                DrawNightlyBuildNow(*Owner);
+                ImGui::EndTabItem();
+            }
             if (ImGui::BeginTabItem("Set up a new build") == true)
             {
                 DrawNightlyBuildSetup(*Owner);
@@ -97,7 +102,8 @@ void App::DrawNightlyBuild()
 
 void App::DrawNightlyBuildJobs(const Project& Owner)
 {
-    const std::vector<NightlyBuild::Job> Jobs = NightlyBuild_.Jobs(Owner.Path);
+    std::vector<NightlyBuild::Job> Jobs = NightlyBuild_.Jobs(Owner.Path);
+    Jobs.erase(std::remove_if(Jobs.begin(), Jobs.end(), [](const NightlyBuild::Job& Item) { return Item.OneOff == true; }), Jobs.end());
     if (Jobs.empty() == true)
     {
         ImGui::Spacing();
@@ -153,16 +159,7 @@ void App::DrawNightlyBuildJobs(const Project& Owner)
         }
 
         ImGui::TableNextColumn();
-        if (Item.LastResult.empty() == true)
-        {
-            ImGui::TextDisabled("Never run");
-        }
-        else
-        {
-            const bool Good = Item.LastResult == "Succeeded" || Item.LastResult == "Running";
-            ImGui::TextColored(Good == true ? ImGui::ColorConvertU32ToFloat4(DoneColor_) : WaitingColorV4_, "%s", Item.LastResult.c_str());
-            ImGui::TextDisabled("%s", Item.LastTime.c_str());
-        }
+        DrawNightlyBuildResult(Item);
 
         ImGui::TableNextColumn();
         ImGui::BeginDisabled(Busy == true);
@@ -204,39 +201,117 @@ void App::DrawNightlyBuildJobs(const Project& Owner)
             OpenModal(Modal::Confirm);
         }
         ImGui::EndDisabled();
-        ImGui::BeginDisabled(Item.HasLog == false);
-        if (ImGui::SmallButton("Open log") == true)
-        {
-            Platform::Reveal(NightlyBuild::LogPath(Owner.Path, Item.Name).string());
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::BeginDisabled(Item.HasOutput == false);
-        if (ImGui::SmallButton("Open output") == true)
-        {
-            Platform::Reveal(Item.OutputDir);
-        }
-        ImGui::EndDisabled();
+        DrawNightlyBuildFileButtons(Owner, Item);
         ImGui::PopID();
     }
     ImGui::EndTable();
 }
 
-void App::DrawNightlyBuildSetup(const Project& Owner)
+void App::DrawNightlyBuildResult(const NightlyBuild::Job& Item)
+{
+    if (Item.LastResult.empty() == true)
+    {
+        ImGui::TextDisabled("Never run");
+        return;
+    }
+    const bool Good = Item.LastResult == "Succeeded" || Item.LastResult == "Running";
+    ImGui::TextColored(Good == true ? ImGui::ColorConvertU32ToFloat4(DoneColor_) : WaitingColorV4_, "%s", Item.LastResult.c_str());
+    ImGui::TextDisabled("%s", Item.LastTime.c_str());
+}
+
+void App::DrawNightlyBuildFileButtons(const Project& Owner, const NightlyBuild::Job& Item)
+{
+    ImGui::BeginDisabled(Item.HasLog == false);
+    if (ImGui::SmallButton("Open log") == true)
+    {
+        Platform::Reveal(NightlyBuild::LogPath(Owner.Path, Item.Name).string());
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(Item.HasOutput == false);
+    if (ImGui::SmallButton("Open output") == true)
+    {
+        Platform::Reveal(Item.OutputDir);
+    }
+    ImGui::EndDisabled();
+}
+
+NightlyBuild::Job App::NightlyBuildDraftJob() const
+{
+    NightlyBuild::Job Item = NightlyDraft_;
+    const bool UsesEngine = NightlyDraft_.What != NightlyBuild::Kind::BuildScript;
+    Item.OutputDir = NightlyDraft_.What == NightlyBuild::Kind::PackageGame ? std::string(NightlyOutputBuffer_) : std::string();
+    Item.EngineDir = UsesEngine == true ? std::string(NightlyEngineBuffer_) : std::string();
+    return Item;
+}
+
+void App::DrawNightlyBuildNow(const Project& Owner)
 {
     const float Scale = UiScale_;
-    const bool IsUnreal = NightlyIsUnreal_;
-    const bool HasScript = NightlyHasScript_;
     const float LabelWidth = 130 * Scale;
     const float FieldWidth = std::max(200 * Scale, ImGui::GetContentRegionAvail().x - LabelWidth);
+    const std::vector<NightlyBuild::Job> Jobs = NightlyBuild_.Jobs(Owner.Path);
+    const std::vector<NightlyBuild::Job>::const_iterator Last =
+        std::find_if(Jobs.begin(), Jobs.end(), [](const NightlyBuild::Job& Item) { return Item.OneOff == true; });
+    const bool Running = Last != Jobs.end() && Last->IsRunning() == true;
+    ImGui::Spacing();
+    ImGui::TextDisabled("Starts one build straight away. It keeps going if you close this window or the app.");
     ImGui::Spacing();
 
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted("Name");
-    ImGui::SameLine(LabelWidth);
-    ImGui::SetNextItemWidth(FieldWidth);
-    ImGui::InputText("##nightlyName", NightlyNameBuffer_, sizeof NightlyNameBuffer_);
+    ImGui::BeginDisabled(Running == true);
+    DrawNightlyBuildFields(Owner, NightlyBuild::ONE_OFF_NAME, LabelWidth, FieldWidth);
+    ImGui::EndDisabled();
+    ImGui::Spacing();
+    if (NightlyBuildError_.empty() == false)
+    {
+        ImGui::TextColored(WaitingColorV4_, "%s", NightlyBuildError_.c_str());
+    }
+    ImGui::BeginDisabled(NightlyBuild_.Busy() == true || Running == true);
+    if (ImGui::Button("Start build") == true)
+    {
+        NightlyBuildError_.clear();
+        NightlyBuild_.BuildNow(Owner.Path, NightlyBuildDraftJob(), NightlyBuildError_);
+        NightlyBuildCheckAt_ = 0;
+    }
+    ImGui::EndDisabled();
 
+    ImGui::Spacing();
+    ImGui::SeparatorText("Last build");
+    if (Last == Jobs.end())
+    {
+        ImGui::TextDisabled("No build has been started from here yet.");
+        return;
+    }
+    const std::string What = NightlyBuild::KindLabel(Last->What) + (Last->What == NightlyBuild::Kind::BuildScript ? "" : " (" + Last->Config + ")");
+    ImGui::TextUnformatted(What.c_str());
+    if (Running == true)
+    {
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(BusyColor_), "Building");
+        ImGui::TextDisabled("Started %s", Last->LastTime.c_str());
+    }
+    else
+    {
+        DrawNightlyBuildResult(*Last);
+    }
+    ImGui::Spacing();
+    if (Running == true)
+    {
+        ImGui::BeginDisabled(NightlyBuild_.Busy() == true);
+        if (ImGui::SmallButton("Cancel build") == true)
+        {
+            NightlyBuild_.Cancel(Owner.Path, Last->Name);
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+    }
+    DrawNightlyBuildFileButtons(Owner, *Last);
+}
+
+// The fields both tabs share: what to build, the configuration, and where the output and engine are.
+void App::DrawNightlyBuildFields(const Project& Owner, const std::string& JobName, const float LabelWidth, const float FieldWidth)
+{
+    const bool IsUnreal = NightlyIsUnreal_;
+    const bool HasScript = NightlyHasScript_;
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("What to build");
     ImGui::SameLine(LabelWidth);
@@ -284,6 +359,39 @@ void App::DrawNightlyBuildSetup(const Project& Owner)
             ImGui::EndCombo();
         }
     }
+    if (NightlyDraft_.What == NightlyBuild::Kind::PackageGame)
+    {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Output folder");
+        ImGui::SameLine(LabelWidth);
+        ImGui::SetNextItemWidth(FieldWidth);
+        const std::string Hint = NightlyBuild::DefaultOutputDir(Owner.Path, JobName);
+        ImGui::InputTextWithHint("##nightlyOutput", Hint.c_str(), NightlyOutputBuffer_, sizeof NightlyOutputBuffer_);
+    }
+    if (UsesEngine == true)
+    {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Engine folder");
+        ImGui::SameLine(LabelWidth);
+        ImGui::SetNextItemWidth(FieldWidth);
+        ImGui::InputTextWithHint("##nightlyEngine", "Found automatically from the project's engine version", NightlyEngineBuffer_, sizeof NightlyEngineBuffer_);
+    }
+}
+
+void App::DrawNightlyBuildSetup(const Project& Owner)
+{
+    const float Scale = UiScale_;
+    const float LabelWidth = 130 * Scale;
+    const float FieldWidth = std::max(200 * Scale, ImGui::GetContentRegionAvail().x - LabelWidth);
+    ImGui::Spacing();
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Name");
+    ImGui::SameLine(LabelWidth);
+    ImGui::SetNextItemWidth(FieldWidth);
+    ImGui::InputText("##nightlyName", NightlyNameBuffer_, sizeof NightlyNameBuffer_);
+
+    DrawNightlyBuildFields(Owner, NightlyNameBuffer_, LabelWidth, FieldWidth);
 
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Start time");
@@ -320,24 +428,6 @@ void App::DrawNightlyBuildSetup(const Project& Owner)
         }
     }
 
-    if (NightlyDraft_.What == NightlyBuild::Kind::PackageGame)
-    {
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted("Output folder");
-        ImGui::SameLine(LabelWidth);
-        ImGui::SetNextItemWidth(FieldWidth);
-        const std::string Hint = NightlyBuild::DefaultOutputDir(Owner.Path, NightlyNameBuffer_);
-        ImGui::InputTextWithHint("##nightlyOutput", Hint.c_str(), NightlyOutputBuffer_, sizeof NightlyOutputBuffer_);
-    }
-    if (UsesEngine == true)
-    {
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted("Engine folder");
-        ImGui::SameLine(LabelWidth);
-        ImGui::SetNextItemWidth(FieldWidth);
-        ImGui::InputTextWithHint("##nightlyEngine", "Found automatically from the project's engine version", NightlyEngineBuffer_, sizeof NightlyEngineBuffer_);
-    }
-
     ImGui::Spacing();
     if (NightlyBuildError_.empty() == false)
     {
@@ -346,10 +436,8 @@ void App::DrawNightlyBuildSetup(const Project& Owner)
     ImGui::BeginDisabled(NightlyBuild_.Busy() == true);
     if (ImGui::Button("Set up nightly build") == true)
     {
-        NightlyBuild::Job Item = NightlyDraft_;
+        NightlyBuild::Job Item = NightlyBuildDraftJob();
         Item.Name = NightlyNameBuffer_;
-        Item.OutputDir = NightlyDraft_.What == NightlyBuild::Kind::PackageGame ? std::string(NightlyOutputBuffer_) : std::string();
-        Item.EngineDir = UsesEngine == true ? std::string(NightlyEngineBuffer_) : std::string();
         NightlyBuildError_.clear();
         if (NightlyBuild_.Create(Owner.Path, Item, NightlyBuildError_) == true)
         {

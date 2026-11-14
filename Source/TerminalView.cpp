@@ -13,6 +13,7 @@
 #include "Git.h"
 #include "BuildScripts.h"
 #include "ImageCache.h"
+#include "PathLinks.h"
 #include "Platform.h"
 #include "Style.h"
 #include "UiHelpers.h"
@@ -441,6 +442,16 @@ void App::DrawTerminal(Session& CurrentSession, ImVec2 Size, bool IsActive)
             if (CurrentSession.Selecting)
             {
                 CurrentSession.Selecting = false;
+                if (CurrentSession.HasSelection == false && Hovered == true && Io.KeyCtrl == true)
+                {
+                    int Row = 0, Col = 0;
+                    CellAt(Io.MousePos, Row, Col);
+                    const std::string LinkPath = PathLinks::FindExistingPath(CurrentTerminal, ViewTop + Row, Col);
+                    if (LinkPath.empty() == false)
+                    {
+                        PathLinks::Open(LinkPath);
+                    }
+                }
             }
             else if (Reporting && (Hovered || WasReportingDrag == true))
             {
@@ -493,7 +504,17 @@ void App::DrawTerminal(Session& CurrentSession, ImVec2 Size, bool IsActive)
         }
         if (Hovered)
         {
-            ImGui::SetMouseCursor(Reporting ? ImGuiMouseCursor_Arrow : ImGuiMouseCursor_TextInput);
+            ImGuiMouseCursor Cursor = Reporting ? ImGuiMouseCursor_Arrow : ImGuiMouseCursor_TextInput;
+            if (Reporting == false && CurrentSession.Selecting == false && Io.KeyCtrl == true)
+            {
+                int Row = 0, Col = 0;
+                CellAt(Io.MousePos, Row, Col);
+                if (PathLinks::FindExistingPath(CurrentTerminal, ViewTop + Row, Col).empty() == false)
+                {
+                    Cursor = ImGuiMouseCursor_Hand;
+                }
+            }
+            ImGui::SetMouseCursor(Cursor);
         }
 
         // ---- selection range (absolute rows) ----

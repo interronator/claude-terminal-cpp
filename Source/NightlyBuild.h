@@ -39,6 +39,7 @@ public:
     static constexpr const char* DAY_LABELS[] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
     static constexpr const char* DAY_NAMES[] = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
     static constexpr int DAY_COUNT = 7;
+    static constexpr const char* ONE_OFF_NAME = "_BuildNow";
 
     struct Job
     {
@@ -50,6 +51,7 @@ public:
         std::array<bool, DAY_COUNT> Days{true, true, true, true, true, true, true};
         std::string OutputDir;
         std::string EngineDir;  // empty: found from the .uproject's engine version
+        bool OneOff = false;    // the project's Build now job: no schedule, started by hand
 
         // Task Scheduler's state name (Ready, Running, Disabled, Queued), which is not translated; empty when the task is missing.
         std::string TaskState;
@@ -228,6 +230,11 @@ public:
             Err = "Give the build a name.";
             return false;
         }
+        if (SafeName(Item.Name) == SafeName(ONE_OFF_NAME))
+        {
+            Err = "That name is used by Build now. Pick another one.";
+            return false;
+        }
         std::error_code ErrorCode;
         if (std::filesystem::exists(JobDir(ProjectDir, Item.Name) / SETTINGS_FILE, ErrorCode) == true)
         {
@@ -239,6 +246,35 @@ public:
             Err = "Pick at least one day.";
             return false;
         }
+        if (CheckBuildable(ProjectDir, Item, Err) == false)
+        {
+            return false;
+        }
+        StartAction(ProjectDir, [ProjectDir, Item](std::string& Message)
+                    {
+                        return CreateNow(ProjectDir, Item, Message);
+                    });
+        return true;
+    }
+
+    // Builds once, right away. The run still goes through Task Scheduler, so it carries on if this program closes.
+    bool BuildNow(const std::string& ProjectDir, Job Item, std::string& Err)
+    {
+        if (CheckBuildable(ProjectDir, Item, Err) == false)
+        {
+            return false;
+        }
+        Item.Name = ONE_OFF_NAME;
+        Item.OneOff = true;
+        StartAction(ProjectDir, [ProjectDir, Item](std::string& Message)
+                    {
+                        return BuildNowNow(ProjectDir, Item, Message);
+                    });
+        return true;
+    }
+
+    static bool CheckBuildable(const std::string& ProjectDir, const Job& Item, std::string& Err)
+    {
         if (Item.What != Kind::BuildScript && IsUnreal(ProjectDir) == false)
         {
             Err = "This project has no .uproject file.";
@@ -254,11 +290,12 @@ public:
             Err = "Unreal can't build the editor in Shipping. Pick Development or DebugGame.";
             return false;
         }
-        StartAction(ProjectDir, [ProjectDir, Item](std::string& Message)
-                    {
-                        return CreateNow(ProjectDir, Item, Message);
-                    });
         return true;
+    }
+
+    static std::string DisplayName(const Job& Item)
+    {
+        return Item.OneOff == true ? std::string("Build now") : Item.Name;
     }
 
     void RunNow(const std::string& ProjectDir, const std::string& Name)
@@ -502,7 +539,7 @@ private:
         }
         return "Name=" + Item.Name + "\nKind=" + std::to_string(static_cast<int>(Item.What)) + "\nConfig=" + Item.Config +
                "\nHour=" + std::to_string(Item.Hour) + "\nMinute=" + std::to_string(Item.Minute) + "\nDays=" + Days +
-               "\nOutputDir=" + Item.OutputDir + "\nEngineDir=" + Item.EngineDir + "\n";
+               "\nOutputDir=" + Item.OutputDir + "\nEngineDir=" + Item.EngineDir + "\nOneOff=" + (Item.OneOff == true ? "1" : "0") + "\n";
     }
 
     static Job LoadSettings(const std::filesystem::path& Path)
@@ -558,6 +595,10 @@ private:
             {
                 Item.EngineDir = Value;
             }
+            else if (Key == "OneOff")
+            {
+                Item.OneOff = Value == "1";
+            }
         }
         return Item;
     }
@@ -578,7 +619,7 @@ private:
             "Set-Status '" + std::string(RUNNING) + "'\r\n"
             "$ProjectDir = " + PsQuote(ProjectDir) + "\r\n"
             "Set-Location $ProjectDir\r\n"
-            "\"Nightly build '\" + " + PsQuote(Item.Name) + " + \"' started $(Get-Date)\" | Out-File -FilePath $Log -Encoding utf8\r\n"
+            "\"Build '\" + " + PsQuote(DisplayName(Item)) + " + \"' started $(Get-Date)\" | Out-File -FilePath $Log -Encoding utf8\r\n"
             "$Code = 1\r\n"
             "try {\r\n";
         if (Item.What == Kind::BuildScript)
@@ -658,7 +699,7 @@ private:
         Git::ExcludePath(Info.Root, "/" + Relative.generic_string() + "/");
     }
 
-    static bool CreateNow(const std::string& ProjectDir, Job Item, std::string& Message)
+    static bool WriteJobFiles(const std::string& ProjectDir, Job& Item, std::filesystem::path& Script, std::string& Message)
     {
         if (Item.OutputDir.empty() == true)
         {
@@ -668,21 +709,42 @@ private:
         std::error_code ErrorCode;
         std::filesystem::create_directories(Dir, ErrorCode);
         ExcludeFromGit(ProjectDir);
-        const std::filesystem::path Script = Dir / SCRIPT_FILE;
+        Script = Dir / SCRIPT_FILE;
         // Windows PowerShell reads a script without a BOM in the old ANSI code page, which garbles non-English paths.
         if (WriteFile(Script, "\xEF\xBB\xBF" + ScriptContent(ProjectDir, Item)) == false || WriteFile(Dir / SETTINGS_FILE, SaveSettings(Item)) == false)
         {
             Message = "Could not write the build files in " + Dir.string();
             return false;
         }
-        const std::string Trigger = EveryDay(Item) == true ? "-Daily" : "-Weekly -DaysOfWeek " + DayList(Item, DAY_NAMES, ",");
+        return true;
+    }
+
+    // TriggerArgs empty registers a task that only runs when started by hand.
+    static std::string RegisterCommand(const std::string& ProjectDir, const std::string& Name, const std::filesystem::path& Script, const std::string& TriggerArgs)
+    {
         const std::string Body =
             "$Action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ' + [char]34 + " +
-            PsQuote(Script.string()) + " + [char]34)\n"
-            "$Trigger = New-ScheduledTaskTrigger " + Trigger + " -At " + PsQuote(TimeText(Item)) + "\n"
-            "Register-ScheduledTask " + TaskArgs(ProjectDir, Item.Name) + " -Action $Action -Trigger $Trigger -Force | Out-Null";
+            PsQuote(Script.string()) + " + [char]34)\n";
+        if (TriggerArgs.empty() == true)
+        {
+            return Body + "Register-ScheduledTask " + TaskArgs(ProjectDir, Name) + " -Action $Action -Force | Out-Null";
+        }
+        return Body + "$Trigger = New-ScheduledTaskTrigger " + TriggerArgs + "\n"
+                      "Register-ScheduledTask " + TaskArgs(ProjectDir, Name) + " -Action $Action -Trigger $Trigger -Force | Out-Null";
+    }
+
+    static bool CreateNow(const std::string& ProjectDir, Job Item, std::string& Message)
+    {
+        std::filesystem::path Script;
+        if (WriteJobFiles(ProjectDir, Item, Script, Message) == false)
+        {
+            return false;
+        }
+        const std::filesystem::path Dir = JobDir(ProjectDir, Item.Name);
+        std::error_code ErrorCode;
+        const std::string Trigger = EveryDay(Item) == true ? "-Daily" : "-Weekly -DaysOfWeek " + DayList(Item, DAY_NAMES, ",");
         std::string Output;
-        if (PowerShell(Body, Output) == true)
+        if (PowerShell(RegisterCommand(ProjectDir, Item.Name, Script, Trigger + " -At " + PsQuote(TimeText(Item))), Output) == true)
         {
             Message = "Set up " + Item.Name + ": " + ScheduleText(Item) + ".";
             return true;
@@ -692,6 +754,31 @@ private:
         std::filesystem::remove(Script, ErrorCode);
         std::filesystem::remove(Dir, ErrorCode);
         return false;
+    }
+
+    // The window's snapshot can be a few seconds old, so the running check is made again here before the script is replaced.
+    static bool BuildNowNow(const std::string& ProjectDir, Job Item, std::string& Message)
+    {
+        std::string State;
+        PowerShell("(Get-ScheduledTask " + TaskArgs(ProjectDir, Item.Name) + " -ErrorAction SilentlyContinue).State", State);
+        if (State == RUNNING)
+        {
+            Message = "A build is already running.";
+            return false;
+        }
+        std::filesystem::path Script;
+        if (WriteJobFiles(ProjectDir, Item, Script, Message) == false)
+        {
+            return false;
+        }
+        std::string Output;
+        if (PowerShell(RegisterCommand(ProjectDir, Item.Name, Script, "") + "\nStart-ScheduledTask " + TaskArgs(ProjectDir, Item.Name), Output) == false)
+        {
+            Message = "Task Scheduler: " + Output;
+            return false;
+        }
+        Message = "Started: " + KindLabel(Item.What) + (Item.What == Kind::BuildScript ? "" : " (" + Item.Config + ")") + ".";
+        return true;
     }
 
     // Ends the whole process tree: Unreal's build tools start several child programs that outlive their parent otherwise.

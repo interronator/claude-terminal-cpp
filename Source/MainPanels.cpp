@@ -34,11 +34,7 @@ void App::DrawMain(const float Width, const float Height)
     ImVec2 const Avail = ImGui::GetContentRegionAvail();
     if (Ids.empty())
     {
-        const char* const Message = State_.Projects.empty() ? "Add a project folder, then start a Claude session in it."
-                                                       : "Pick a session in the sidebar, or press + next to a project to start one.";
-        ImVec2 const TextSize = ImGui::CalcTextSize(Message);
-        ImGui::SetCursorPos(ImVec2((Avail.x - TextSize.x) * 0.5f, ImGui::GetCursorPosY() + Avail.y * 0.4f));
-        ImGui::TextDisabled("%s", Message);
+        DrawEmptyMain(Avail);
         ImGui::EndChild();
         return;
     }

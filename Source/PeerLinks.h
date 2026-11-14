@@ -27,6 +27,7 @@ public:
         float Strength = 0;          // 1 while the pair is talking, fading to 0 after the last message
         std::vector<float> Packets;  // 0..1 progress of each recent message's pulse along the vein
         bool Waiting = false;        // the sender's last message has had no reply yet
+        std::time_t LastSentAt = 0;
     };
 
     static double WallNow()
@@ -110,6 +111,7 @@ public:
                 }
             }
             Current.Waiting = IsWaiting(Item.first, Data, Now);
+            Current.LastSentAt = Data.LastSentAt;
             if (Current.Strength <= 0.0f && Current.Packets.empty() == true && Current.Waiting == false)
             {
                 continue;
@@ -146,6 +148,14 @@ public:
             }
         }
         return false;
+    }
+
+    // The name a running session has in Claude's session list (what ListAgents shows); empty when it is not listed.
+    std::string RegistryNameFor(const std::string& ClaudeSessionId)
+    {
+        ReadRegistry(WallNow());
+        const std::map<std::string, std::string>::const_iterator Found = NameByClaudeId_.find(ClaudeSessionId);
+        return Found != NameByClaudeId_.end() ? Found->second : std::string();
     }
 
     // Claude reports each session's state in its registry; used for sessions running outside the app.
@@ -339,6 +349,7 @@ private:
         }
         ByName_.clear();
         ByAddress_.clear();
+        NameByClaudeId_.clear();
         for (const std::filesystem::directory_entry& Item : Iterator)
         {
             if (Item.path().extension() != ".json")
@@ -361,6 +372,7 @@ private:
             {
                 continue;
             }
+            NameByClaudeId_[Current.ClaudeSessionId] = Entry.value("name", "");
             Remember(ByName_, Entry.value("name", ""), Current);
             Remember(ByAddress_, Entry.value("messagingSocketPath", ""), Current);
         }
@@ -385,5 +397,6 @@ private:
     std::map<std::string, std::time_t> PromptAt_;  // app session id -> when the user last typed a prompt into it
     std::map<std::string, Registered> ByName_;
     std::map<std::string, Registered> ByAddress_;
+    std::map<std::string, std::string> NameByClaudeId_;
     double RegistryReadAt_ = -1.0e9;
 };

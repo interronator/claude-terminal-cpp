@@ -45,6 +45,7 @@ void App::PollScreenshots(Session& CurrentSession)
     NotePeerMessages(CurrentSession, Scanner);
     CurrentSession.BackgroundTasks = CurrentSession.IsRunning() == true ? Scanner.RunningBackgroundTasks(CurrentSession.LaunchedAt) : 0;
     RunningCommands_[Id] = CurrentSession.IsRunning() == true ? Scanner.RunningCommands(CurrentSession.LaunchedAt) : std::vector<TranscriptScanner::ActiveCommand>();
+    OverdueShells_[Id] = CurrentSession.IsRunning() == true ? Scanner.OverdueShells(CurrentSession.LaunchedAt) : std::vector<TranscriptScanner::ActiveCommand>();
     for (const TranscriptScanner::Shot& Found : Shots)
     {
         // A session can mention another session's screenshot; the tag in the path says who really made it.
@@ -62,6 +63,21 @@ void App::DrawScreenshotPanel(const float Width)
     const float Scale = UiScale_;
     const bool ProjectSelected = ProjectScopeId_.empty() == false;
 
+    std::set<std::string> ShownSessions;
+    ShownSessions.insert(State_.Ui.ActiveId);
+    bool Grew = true;
+    while (Grew == true)
+    {
+        Grew = false;
+        for (const std::unique_ptr<Session>& Candidate : Sessions_)
+        {
+            if (Candidate->Rec.ParentId.empty() == false && ShownSessions.count(Candidate->Rec.ParentId) > 0 && ShownSessions.insert(Candidate->Rec.Id).second == true)
+            {
+                Grew = true;
+            }
+        }
+    }
+
     std::vector<const ScreenshotFeed::Entry*> Visible;
     std::set<std::string> VisiblePaths;
     for (const ScreenshotFeed::Entry& Item : ScreenshotFeed_.Entries())
@@ -74,7 +90,7 @@ void App::DrawScreenshotPanel(const float Width)
                 continue;
             }
         }
-        else if (Item.SessionId != State_.Ui.ActiveId)
+        else if (ShownSessions.count(Item.SessionId) == 0)
         {
             continue;
         }
@@ -109,7 +125,7 @@ void App::DrawScreenshotPanel(const float Width)
         ImGui::SetTooltip("Hide screenshots");
     }
 
-    ImGui::TextDisabled("%s", ProjectSelected == true ? "From every session in this project" : "From the selected session");
+    ImGui::TextDisabled("%s", ProjectSelected == true ? "From every session in this project" : ShownSessions.size() > 1 ? "From the selected session and its children" : "From the selected session");
 
     if (State_.Ui.HiddenScreenshots.empty() == false)
     {

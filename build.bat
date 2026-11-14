@@ -26,21 +26,41 @@ set VSFOUND=
 for /f "usebackq delims=" %%P in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSFOUND=%%P
 if "%VSFOUND%"=="" goto :novs
 
-if "%CLEAN%"=="1" if exist build rmdir /s /q build
+set BUILDDIR=build-ninja
+set GENERATOR=Ninja
+if exist "%VSFOUND%\VC\Auxiliary\Build\vcvars64.bat" (
+  call "%VSFOUND%\VC\Auxiliary\Build\vcvars64.bat" >nul
+) else (
+  set BUILDDIR=build
+  set GENERATOR=
+)
+if "%GENERATOR%"=="Ninja" (
+  where ninja >nul 2>&1
+  if errorlevel 1 (
+    set BUILDDIR=build
+    set GENERATOR=
+  )
+)
+
+if "%CLEAN%"=="1" if exist %BUILDDIR% rmdir /s /q %BUILDDIR%
 
 echo [1/3] Configuring...
-cmake -S . -B build -Wno-author
+if "%GENERATOR%"=="Ninja" (
+  cmake -S . -B %BUILDDIR% -G Ninja -DCMAKE_BUILD_TYPE=Release -Wno-author
+) else (
+  cmake -S . -B %BUILDDIR% -Wno-author
+)
 if errorlevel 1 goto :cfgfail
 
 echo.
 echo [2/3] Building (Release)...
-cmake --build build --config Release --parallel
+cmake --build %BUILDDIR% --config Release --parallel
 if errorlevel 1 goto :buildfail
 
 echo.
 echo [3/3] Copying executable...
-set EXE=build\claude-terminal.exe
-if exist "build\Release\claude-terminal.exe" set EXE=build\Release\claude-terminal.exe
+set EXE=%BUILDDIR%\claude-terminal.exe
+if exist "%BUILDDIR%\Release\claude-terminal.exe" set EXE=%BUILDDIR%\Release\claude-terminal.exe
 if not exist "%EXE%" goto :noexe
 if not exist Binaries mkdir Binaries
 taskkill /f /im claude-terminal.exe >nul 2>&1

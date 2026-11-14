@@ -59,15 +59,36 @@ public:
     // Percent of the context window the latest main-thread assistant message occupied, or -1 when unknown.
     // The transcript doesn't record the window size, so it's inferred from the model; usage past the standard
     // window always implies the large one.
-    int ContextPercent() const
+    int ContextPercent(const std::int64_t KnownWindow = 0) const
     {
         if (ContextTokens_ <= 0)
         {
             return -1;
         }
-        const bool LargeWindow = ContextTokens_ > STANDARD_CONTEXT_WINDOW || HasLargeContextWindow(ContextModel_) == true;
-        const std::int64_t Window = LargeWindow == true ? LARGE_CONTEXT_WINDOW : STANDARD_CONTEXT_WINDOW;
+        const std::int64_t Window = ContextWindow(KnownWindow);
         return static_cast<int>(std::min<std::int64_t>(100, (ContextTokens_ * 100 + Window / 2) / Window));
+    }
+
+    // KnownWindow comes from the model list; without it the size is guessed from the model id.
+    std::int64_t ContextWindow(const std::int64_t KnownWindow = 0) const
+    {
+        const bool Past = KnownWindow > 0 && ContextTokens_ > KnownWindow;
+        if (KnownWindow > 0 && Past == false)
+        {
+            return KnownWindow;
+        }
+        const bool LargeWindow = ContextTokens_ > STANDARD_CONTEXT_WINDOW || HasLargeContextWindow(ContextModel_) == true;
+        return LargeWindow == true ? LARGE_CONTEXT_WINDOW : STANDARD_CONTEXT_WINDOW;
+    }
+
+    std::int64_t ContextTokens() const
+    {
+        return ContextTokens_;
+    }
+
+    const std::string& CurrentModel() const
+    {
+        return ContextModel_;
     }
 
     struct ActiveCommand
@@ -79,6 +100,7 @@ public:
         std::string Command;
         std::string OutputFile;   // background shells write their output here
         std::time_t StartedAt = 0;
+        std::time_t LastEventAt = 0;  // monitors: when it last reported an event; 0 = never
         std::time_t Deadline = 0;  // shell: when its time limit hits; monitor: when it expires; 0 = none
     };
 
@@ -105,6 +127,26 @@ public:
         return Running;
     }
 
+    // Foreground shell commands with no result long after their own time limit should have ended them, so they are probably hung.
+    std::vector<ActiveCommand> OverdueShells(const std::time_t Since) const
+    {
+        const std::time_t Now = std::time(nullptr);
+        std::vector<ActiveCommand> Overdue;
+        for (const std::pair<const std::string, ActiveCommand>& Item : Commands_)
+        {
+            const ActiveCommand& Command = Item.second;
+            if (Command.Type != ActiveCommand::Kind::Shell || Command.Deadline == 0 || Command.StartedAt + LAUNCH_SLACK_SECONDS < Since)
+            {
+                continue;
+            }
+            if (Now > Command.Deadline + OVERDUE_SECONDS)
+            {
+                Overdue.push_back(Command);
+            }
+        }
+        return Overdue;
+    }
+
     // A message this session sent to, or received from, another Claude session on this machine.
     struct PeerMessage
     {
@@ -124,6 +166,9 @@ public:
 
     // When the user last typed a prompt into this session, as opposed to a tool result, a notice or another session's message.
     std::time_t LastUserPromptAt() const { return LastUserPromptAt_; }
+
+    // What the user typed as the first prompt of this transcript (empty until they send one).
+    const std::string& FirstUserPrompt() const { return FirstUserPrompt_; }
 
     // The text of Claude's most recent reply in the main conversation (empty before its first reply).
     const std::string& LastAssistantText() const { return LastAssistantText_; }
@@ -163,6 +208,7 @@ private:
     static constexpr const char* OUTPUT_MARKER = "Output is being written to: ";
     static constexpr std::time_t LAUNCH_SLACK_SECONDS = 5;
     static constexpr std::time_t EXPIRY_SLACK_SECONDS = 60;
+    static constexpr std::time_t OVERDUE_SECONDS = 120;
     static constexpr std::time_t DEFAULT_SHELL_TIMEOUT_SECONDS = 120;
 
     // Text of a tool_result block, whose content is either a string or a list of text blocks.
@@ -355,7 +401,7 @@ private:
     }
 
     // Each <task-notification> with a <status> means its task ended; ones without a status are a monitor's events.
-    void NoteTaskNotifications(const std::string& Text)
+    void NoteTaskNotifications(const std::string& Text, const std::time_t When)
     {
         const std::string Open = "<task-notification>";
         const std::string Close = "</task-notification>";
@@ -366,12 +412,24 @@ private:
             const std::string Body = Text.substr(Position, End == std::string::npos ? std::string::npos : End - Position);
             Position += Open.size();
             const size_t IdAt = Body.find("<task-id>");
-            if (IdAt == std::string::npos || Body.find("<status>") == std::string::npos)
+            if (IdAt == std::string::npos)
             {
                 continue;
             }
             const size_t IdStart = IdAt + std::string("<task-id>").size();
-            EndTask(Body.substr(IdStart, Body.find('<', IdStart) - IdStart));
+            const std::string TaskId = Body.substr(IdStart, Body.find('<', IdStart) - IdStart);
+            if (Body.find("<status>") != std::string::npos)
+            {
+                EndTask(TaskId);
+                continue;
+            }
+            for (std::pair<const std::string, ActiveCommand>& Item : Commands_)
+            {
+                if (Item.second.TaskId == TaskId)
+                {
+                    Item.second.LastEventAt = std::max(Item.second.LastEventAt, When);
+                }
+            }
         }
     }
 
@@ -383,7 +441,7 @@ private:
             const nlohmann::json::const_iterator Queued = Entry.find("content");
             if (Queued != Entry.end() && Queued->is_string() == true)
             {
-                NoteTaskNotifications(Queued->get<std::string>());
+                NoteTaskNotifications(Queued->get<std::string>(), When);
             }
             return;
         }
@@ -403,7 +461,7 @@ private:
         {
             if (FromUser == true)
             {
-                NoteTaskNotifications(Content->get<std::string>());
+                NoteTaskNotifications(Content->get<std::string>(), When);
             }
             return;
         }
@@ -430,7 +488,7 @@ private:
             }
             if (Type == "text" && FromUser == true)
             {
-                NoteTaskNotifications(Block.value("text", ""));
+                NoteTaskNotifications(Block.value("text", ""), When);
                 continue;
             }
             if (Type != "tool_use" || FromUser == true)
@@ -473,6 +531,10 @@ private:
         if (IsUserPrompt(Entry) == true)
         {
             LastUserPromptAt_ = std::max(LastUserPromptAt_, When);
+            if (FirstUserPrompt_.empty() == true)
+            {
+                FirstUserPrompt_ = PromptText(Entry);
+            }
             return;
         }
         const nlohmann::json::const_iterator Message = Entry.find("message");
@@ -504,6 +566,37 @@ private:
             }
             PeerMessages_.push_back({Target, std::string(), true, When});
         }
+    }
+
+    static std::string PromptText(const nlohmann::json& Entry)
+    {
+        const nlohmann::json::const_iterator Message = Entry.find("message");
+        if (Message == Entry.end() || Message->is_object() == false)
+        {
+            return {};
+        }
+        const nlohmann::json::const_iterator Content = Message->find("content");
+        if (Content == Message->end())
+        {
+            return {};
+        }
+        if (Content->is_string() == true)
+        {
+            return Content->get<std::string>();
+        }
+        std::string Text;
+        if (Content->is_array() == false)
+        {
+            return Text;
+        }
+        for (const nlohmann::json& Block : *Content)
+        {
+            if (Block.is_object() == true && Block.value("type", "") == "text")
+            {
+                Text += Block.value("text", "");
+            }
+        }
+        return Text;
     }
 
     // Claude tags each turn with where it came from; tool results, notices and other sessions' messages aren't "human".
@@ -925,4 +1018,5 @@ private:
     std::set<std::string> EndedTasks_;
     std::vector<PeerMessage> PeerMessages_;
     std::time_t LastUserPromptAt_ = 0;
+    std::string FirstUserPrompt_;
 };

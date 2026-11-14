@@ -19,6 +19,8 @@
 #include <string>
 #include <vector>
 
+#include "BackgroundWatch.h"
+#include "ChildProgress.h"
 #include "CommandTiming.h"
 #include "FileIndex.h"
 #include "Git.h"
@@ -30,14 +32,17 @@
 #include "ModelCatalog.h"
 #include "NightlyBuild.h"
 #include "PeerLinks.h"
+#include "ProjectLocks.h"
 #include "PeerVeins.h"
 #include "ProjectLog.h"
 #include "ProjectLogWindow.h"
 #include "ProjectSettingsWindow.h"
 #include "ScreenshotFeed.h"
 #include "Session.h"
+#include "PeerNames.h"
 #include "SessionRequests.h"
 #include "Store.h"
+#include "SessionTitler.h"
 #include "TranscriptScanner.h"
 #include "UsageClient.h"
 
@@ -87,12 +92,34 @@ private:
     void HideSession(std::string Id);
     void RestoreArchivedSession(size_t ArchiveIndex);
     void SendPrompt(Session& CurrentSession, const std::string& Text);
+    void ConfirmSubmitted(Session& Target);
+    // ---- sidebar: sessions nested under the session that started them ----
+    struct SidebarRow
+    {
+        Session* Target = nullptr;
+        int Depth = 0;
+        bool HasChildren = false;
+        int HiddenChildren = 0;        // children folded away under this row
+        bool HiddenChildBusy = false;  // one of them is working or waiting
+    };
+    std::vector<SidebarRow> BuildSidebarRows(const std::string& ProjectId);
+    void AppendSidebarRow(Session& Current, const int Depth, const std::vector<Session*>& InProject, std::set<std::string>& Placed, std::vector<SidebarRow>& Rows);
+    void DrawSidebarSessionRow(const SidebarRow& Row, std::string& DragSourceId, std::string& DragTargetId);
     void DrawReview();
     void PollScreenshots(Session& CurrentSession);
     // ---- session-to-session messages, shown as veins along the pane borders ----
     void NotePeerMessages(const Session& CurrentSession, TranscriptScanner& Scanner);
     std::string PeerDisplayName(const std::string& Id) const;
     bool IsPeerBusy(const std::string& Id) const;
+    struct ReplyTrack
+    {
+        std::time_t MessageAt = 0;
+        bool ReceiverWorked = false;
+        bool ReceiverSettled = false;
+        double LastSeenAt = 0.0;
+    };
+    std::map<std::string, ReplyTrack> ReplyTracks_;
+    bool ReplyHandled(const PeerLinks::View& Link);
     void DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const float Gap);
     void DrawWaitingPills(ImDrawList* const DrawList, const PeerVeins::Box& Pane, const std::vector<std::pair<std::string, ImU32>>& Labels);
     void RequestDeleteAllArchived();
@@ -227,6 +254,7 @@ private:
         std::time_t RequestedAt = 0;
         double CheckAt = 0;
         bool Ready = false;
+        bool AutoContinue = true;  // start the fresh session as soon as the summary is ready
     };
     static std::string HandoffPrompt(const std::string& Path)
     {
@@ -272,7 +300,43 @@ private:
         const std::filesystem::path Path = std::filesystem::path(SessionProjectDir(CurrentSession)) / "ClaudeHandoffs" / (std::string(Stamp) + "_" + SafeName + ".md");
         Handoffs_[CurrentSession.Rec.Id] = {Path.string(), Now, 0, false};
         SendPrompt(CurrentSession, HandoffPrompt(Path.string()));
-        ShowToast("Asked " + CurrentSession.Rec.Name + " for a handoff summary. The button turns into Continue fresh when it's written.");
+        ShowToast("Asked " + CurrentSession.Rec.Name + " for a handoff summary. A fresh session starts from it once it's written.");
+    }
+    // Runs once per frame, outside any pane drawing, because starting a session changes the session list.
+    void AutoContinueHandoffs()
+    {
+        std::vector<std::string> ReadyIds;
+        for (const std::pair<const std::string, Handoff>& Entry : Handoffs_)
+        {
+            if (Entry.second.AutoContinue == false)
+            {
+                continue;
+            }
+            const Session* const Source = FindSession(Entry.first);
+            if (Source == nullptr)
+            {
+                continue;
+            }
+            const Handoff* const Polled = PollHandoff(*Source);
+            if (Polled != nullptr && Polled->Ready == true)
+            {
+                ReadyIds.push_back(Entry.first);
+            }
+        }
+        for (const std::string& ReadyId : ReadyIds)
+        {
+            const Session* const Source = FindSession(ReadyId);
+            if (Source == nullptr)
+            {
+                continue;
+            }
+            ContinueFromHandoff(*Source);
+            const std::map<std::string, Handoff>::iterator Left = Handoffs_.find(ReadyId);
+            if (Left != Handoffs_.end())
+            {
+                Left->second.AutoContinue = false;
+            }
+        }
     }
     // Ready once the file exists, was written after the request, and the session has stopped working on it.
     const Handoff* PollHandoff(const Session& CurrentSession)
@@ -347,9 +411,17 @@ private:
             }
         }
         SessionRequests::EnsureInbox();
-        Target.LaunchModel = State_.AppSettings.DefaultModel;
+        ChildProgress::EnsureDir();
+        ProjectLocks::EnsureScript();
+        Target.ExtraGuidance += (Target.ExtraGuidance.empty() == true ? "" : " ") + ProjectLocks::Guidance(Tag);
+        Target.ExtraGuidance += " " + BackgroundWatch::Guidance();
+        if (Target.Rec.ParentId.empty() == false)
+        {
+            Target.ExtraGuidance += (Target.ExtraGuidance.empty() == true ? "" : " ") + ChildProgress::Guidance(Tag);
+        }
+        Target.LaunchModel = Target.Rec.Model.empty() == false ? Target.Rec.Model : State_.AppSettings.DefaultModel;
         Target.LaunchPermissionMode = State_.AppSettings.DefaultPermissionMode;
-        Target.ExtraGuidance += (Target.ExtraGuidance.empty() == true ? "" : " ") + SessionRequests::Guidance(Tag);
+        Target.ExtraGuidance += (Target.ExtraGuidance.empty() == true ? "" : " ") + SessionRequests::Guidance(Tag, PeerNames::For(Target.Rec.Name, Target.Rec.Id));
         return Target.Start(State_.AppSettings.ClaudeCommand, Cols, Rows, Now_, Err);
     }
     bool IsUnrealSession(const Session& Target)
@@ -363,10 +435,23 @@ private:
         UnrealProjects_[Target.Rec.ProjectId] = IsUnreal;
         return IsUnreal;
     }
-    void DrawLiveView(Session& CurrentSession, const ImVec2 PaneTopLeft, const ImVec2 PaneSize, const float HeaderHeight);
+    float DrawLiveView(Session& CurrentSession, const ImVec2 PaneTopLeft, const ImVec2 PaneSize, const float HeaderHeight);
+    float DrawChildBars(const Session& CurrentSession, const ImVec2 PaneTopLeft, const ImVec2 PaneSize, const float HeaderHeight, const float TopY);
+    void PollChildProgress();
+    void WatchBackgroundTasks(Session& CurrentSession);
+    void DrawPaneModelPicker(Session& CurrentSession, const float Width);
+    float PaneModelPickerWidth(const Session& CurrentSession) const;
+    void DrawContextMeter(const Session& CurrentSession, const float BarWidth, const float HeaderHeight);
+    std::int64_t ContextWindowOf(const TranscriptScanner& Scanner) const;
+    std::string ModelLabelFor(const Session& CurrentSession) const;
+    static std::string FormatTokens(const std::int64_t Tokens);
+    bool CanAskClaudeToUseGit(const Session& CurrentSession) const
+    {
+        return State_.AppSettings.GitHubEnabled == true && ReadGitHubStatus().Value == Git::GitHubStatus::State::LoggedIn && CurrentSession.IsRunning() == true;
+    }
     // Shell commands, background shells and monitors the session is running, with elapsed time and a rough guess of
     // when each will finish, drawn over the top-left of its terminal.
-    void DrawShellActivity(const Session& CurrentSession, const ImVec2 PaneTopLeft, const ImVec2 PaneSize, const float HeaderHeight);
+    void DrawShellActivity(const Session& CurrentSession, const ImVec2 PaneTopLeft, const ImVec2 PaneSize, const float HeaderHeight, const float TopY);
     const std::string& OutputTail(const std::string& OutputFile)
     {
         constexpr double CHECK_INTERVAL_SECONDS = 1.0;
@@ -510,6 +595,11 @@ private:
     void DrawNightlyBuild();
     void DrawNightlyBuildJobs(const Project& Owner);
     void DrawNightlyBuildSetup(const Project& Owner);
+    void DrawNightlyBuildNow(const Project& Owner);
+    void DrawNightlyBuildFields(const Project& Owner, const std::string& JobName, const float LabelWidth, const float FieldWidth);
+    NightlyBuild::Job NightlyBuildDraftJob() const;
+    void DrawNightlyBuildResult(const NightlyBuild::Job& Item);
+    void DrawNightlyBuildFileButtons(const Project& Owner, const NightlyBuild::Job& Item);
     void OpenSessionFromSidebar(const std::string& Id)
     {
         const Session* const Target = FindSession(Id);
@@ -548,14 +638,24 @@ private:
     bool AddProjectPath(const std::string& Path, std::string& Err, std::string* OutId = nullptr);
     std::string GeneralFolderPath() const;
     void StartGeneralSession();
+    void BeginNewSession(const std::string& ProjectId);
+    void StartSessionWithOptions(const std::string& ProjectId, bool Worktree, bool ContinueLast);
+    void DrawNewSessionChoices(const Project& CurrentProject);
+    void AutoTitleTick(Session& CurrentSession);
+    void ApplyAutoTitles();
+    void PollSessionRequests();
+    std::string RequestProjectId(const Session* const Sender, const std::string& Cwd, std::string& Err);
     void OnStatus(Session& CurrentSession, Status OldStatus, Status NewStatus, double BusySeconds);
     void MarkDirty() { Dirty_ = true; }
+    void FocusFamily(const std::string& ParentId);
+    std::vector<std::string> GroupOrder(const std::vector<std::string>& Ids) const;
+    std::string FamilyRootId(const Session& Target, const std::vector<const Session*>& Among) const;
+    bool HasChildSessions(const std::string& ParentId) const;
     void SetTabFilter(const std::string& ProjectId)
     {
         State_.Ui.TabFilterProjectId = ProjectId;
-    void PollSessionRequests();
-    std::string RequestProjectId(const Session* const Sender, const std::string& Cwd, std::string& Err);
         FilterExtraIds_.clear();
+        FamilyFocusIds_.clear();
         MarkDirty();
     }
     // Swaps two sessions' positions in the open-tile order (drag-and-drop pane reordering).
@@ -592,6 +692,7 @@ private:
     float RowCloseButtonWidth() const;
     bool RowCloseButton(const ImVec2& Pos, bool Hovered);
     void DrawMain(const float Width, const float Height);
+    void DrawEmptyMain(const ImVec2& Avail);
     void DrawMainAndPanel();
     void DrawMainColumn(const float Width);
     void DrawFeedbackPanel(const float Width);
@@ -599,6 +700,8 @@ private:
     void StartFeedbackSessions();
     void DrawPauseButton();
     float PauseButtonWidth() const;
+    float ViewArrowWidth() const;
+    void DrawViewMenu(const std::string& GitHubText);
     // Sends "Pause" to every session that is busy working and remembers them so they can be told to continue.
     void PauseWorkingSessions();
     void ContinuePausedSessions();
@@ -676,7 +779,7 @@ private:
         }
         return STOPS[STOP_COUNT - 1].Color;
     }
-    void DrawStatusDot(ImDrawList* DrawList, ImVec2 Center, float Radius, const Session& CurrentSession) const;
+    void DrawStatusDot(ImDrawList* DrawList, ImVec2 Center, float Radius, const Session& CurrentSession, const bool GreyWhenIdle = false) const;
     static bool IsSessionRunning(const Session& CurrentSession)
     {
         return CurrentSession.CurrentStatus == Status::Busy || CurrentSession.CurrentStatus == Status::Starting || CurrentSession.InBackground() == true;
@@ -751,6 +854,7 @@ private:
     std::vector<std::unique_ptr<Session>> Sessions_;
     std::deque<InputEvent> Events_;
     std::string MaximizedId_;
+    std::set<std::string> FamilyFocusIds_;     // when not empty, only these sessions (a parent and its descendants) are shown
     std::vector<std::string> FilterExtraIds_;  // sessions from other projects shown alongside the selected project
     std::string PendingCloseId_;
     double Now_ = 0;
@@ -790,16 +894,18 @@ private:
     int FontSizeEdit_ = 16;
     int PaneTitleScaleEdit_ = 100;
     bool NotifyEdit_ = true;
+    bool AskSessionNameEdit_ = false;
+    SessionTitler Titler_;
     bool AutoStartEdit_ = false;
+    std::string ModelEdit_;
+    ModelCatalog ModelCatalog_{std::filesystem::path(Store::DefaultPath()).parent_path() / "Models.json"};
+    std::string PermissionModeEdit_;
     std::shared_ptr<std::atomic<bool>> WindowPingBusy_ = std::make_shared<std::atomic<bool>>(false);
     double WindowPingLastAt_ = -1000;
     bool GitHubEdit_ = false;
     KeyBindings KeysEdit_;
     int KeyCaptureIndex_ = -1;
     int KeyCaptureEscapeFrame_ = -1;
-    std::string ModelEdit_;
-    ModelCatalog ModelCatalog_{std::filesystem::path(Store::DefaultPath()).parent_path() / "Models.json"};
-    std::string PermissionModeEdit_;
     std::string KeyCaptureError_;
     ThemeColors ThemeEdit_;
     std::map<std::string, std::array<char, 256>> SessionNameEdits_;
@@ -869,13 +975,17 @@ private:
     std::map<std::string, LiveView::Frame> LiveFrames_;
 
     PeerLinks PeerLinks_;
+    SessionRequests SessionRequests_;
+    ChildProgress ChildProgress_;
+    BackgroundWatch BackgroundWatch_;
+    std::map<std::string, std::vector<TranscriptScanner::ActiveCommand>> OverdueShells_;  // session id -> probably hung commands
+    std::map<std::string, double> BackgroundCheckAt_;
     PeerVeins PeerVeins_;
 
     ProjectLogWindow ProjectLogWindow_;
     ProjectSettingsWindow ProjectSettingsWindow_;
 
     NightlyBuild NightlyBuild_;
-    SessionRequests SessionRequests_;
     std::string NightlyBuildId_;  // project whose nightly build window is open; empty when closed
     bool NightlyBuildFocus_ = false;
     double NightlyBuildCheckAt_ = 0;

@@ -131,8 +131,7 @@ void App::ActivateSearchResult(const SearchResult& Result)
                 OpenSession(TargetSessionId);
                 return;
             }
-            ModalTarget_ = Result.Target;
-            OpenModal(Modal::NewSession);
+            BeginNewSession(Result.Target);
             return;
         }
         case SearchResult::Kind::Session:

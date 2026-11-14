@@ -40,6 +40,41 @@ bool App::IsPeerBusy(const std::string& Id) const
     return Local->CurrentStatus == Status::Busy || Local->CurrentStatus == Status::Starting;
 }
 
+// A receiver that worked on a message and settled has dealt with it, even when it answered in its own window
+// instead of sending a message back, so the sender is no longer shown as waiting.
+bool App::ReplyHandled(const PeerLinks::View& Link)
+{
+    constexpr double TRACK_EXPIRE_SECONDS = 6.0 * 3600.0;
+    const double Wall = PeerLinks::WallNow();
+    for (std::map<std::string, ReplyTrack>::iterator Entry = ReplyTracks_.begin(); Entry != ReplyTracks_.end();)
+    {
+        if (Wall - Entry->second.LastSeenAt > TRACK_EXPIRE_SECONDS)
+        {
+            Entry = ReplyTracks_.erase(Entry);
+            continue;
+        }
+        ++Entry;
+    }
+
+    ReplyTrack& Track = ReplyTracks_[Link.FromId + "|" + Link.ToId];
+    Track.LastSeenAt = Wall;
+    const bool Busy = IsPeerBusy(Link.ToId);
+    if (Track.MessageAt != Link.LastSentAt)
+    {
+        Track.MessageAt = Link.LastSentAt;
+        Track.ReceiverWorked = false;
+        Track.ReceiverSettled = Busy == false;
+    }
+    if (Busy == true)
+    {
+        // Work already under way when the message arrived is unrelated until the receiver has settled and started again.
+        Track.ReceiverWorked = Track.ReceiverWorked == true || Track.ReceiverSettled == true;
+        return false;
+    }
+    Track.ReceiverSettled = true;
+    return Track.ReceiverWorked;
+}
+
 // Drawn in a child window over the panes that takes no mouse input, so the veins sit on top of the panes
 // without getting in the way of clicks.
 void App::DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const float Gap)
@@ -64,6 +99,7 @@ void App::DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const fl
     {
         // A sender that went back to work isn't waiting on anyone, whatever the message history says.
         Link.Waiting = Link.Waiting == true && IsPeerBusy(Link.FromId) == false;
+        Link.Waiting = Link.Waiting == true && ReplyHandled(Link) == false;
         if (Link.Strength <= 0.0f && Link.Packets.empty() == true && Link.Waiting == false)
         {
             continue;

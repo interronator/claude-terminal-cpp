@@ -167,25 +167,30 @@ void App::DrawReview()
     ImGui::Checkbox("Activity log", &ReviewShowActivity_);
     ImGui::SameLine();
 
-    const bool GitHubReady = State_.AppSettings.GitHubEnabled == true && ReadGitHubStatus().Value == Git::GitHubStatus::State::LoggedIn;
-    const bool CanPush = GitHubReady == true && ReviewSession != nullptr && ReviewSession->IsRunning() == true;
-    ImGui::BeginDisabled(CanPush == false);
-    const bool PushClicked = ImGui::Button("Push");
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) == true)
+    const bool CanAsk = ReviewSession != nullptr && CanAskClaudeToUseGit(*ReviewSession) == true;
+    const char* const AskTooltips[2] = {"Ask Claude to commit the current changes", "Ask Claude to push the current branch to GitHub"};
+    const char* const AskPrompts[2] = {COMMIT_PROMPT, PUSH_PROMPT};
+    const char* const AskLabels[2] = {"Commit", "Push"};
+    for (int AskIndex = 0; AskIndex < 2; AskIndex++)
     {
-        ImGui::SetTooltip("%s", CanPush == true ? "Ask Claude to push the current branch to GitHub" : "Needs GitHub access and a running session");
-    }
-    if (PushClicked == true)
-    {
-        Session* const PushSession = FindSession(ModalTarget_);
-        if (PushSession != nullptr)
+        ImGui::BeginDisabled(CanAsk == false);
+        const bool AskClicked = ImGui::Button(AskLabels[AskIndex]);
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) == true)
         {
-            SendPrompt(*PushSession, PUSH_PROMPT);
+            ImGui::SetTooltip("%s", CanAsk == true ? AskTooltips[AskIndex] : "Needs GitHub access and a running session");
         }
-        Modal_ = Modal::None;
-        ImGui::CloseCurrentPopup();
-        return;
+        if (AskClicked == true)
+        {
+            Session* const AskSession = FindSession(ModalTarget_);
+            if (AskSession != nullptr)
+            {
+                SendPrompt(*AskSession, AskPrompts[AskIndex]);
+            }
+            Modal_ = Modal::None;
+            ImGui::CloseCurrentPopup();
+            return;
+        }
+        ImGui::SameLine();
     }
-    ImGui::SameLine();
 }

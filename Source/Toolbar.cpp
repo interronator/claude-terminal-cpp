@@ -100,24 +100,13 @@ void App::DrawToolbar()
     ImDrawList* DrawList = ImGui::GetWindowDrawList();
 
     // right-aligned controls first so chips know how much room is left
-    const char* const AllLabel = "All";
-    const char* const RunningLabel = "Running";
-    const char* const ActionLabel = "Requires action";
-    const char* const TileLabel = "Tiles";
-    const char* const TabLabel = "Tabs";
     float const PadX = ImGui::GetStyle().FramePadding.x * 2;
     const float SessionMeterWidth = 120.0f * Scale;
     const float WeeklyMeterWidth = 140.0f * Scale;
-    const bool GitHubShown = State_.AppSettings.GitHubEnabled;
-    const std::string GitHubText = GitHubShown == true ? GitHubLabel() : std::string();
-    float RightWidth = ImGui::CalcTextSize(AllLabel).x + ImGui::CalcTextSize(RunningLabel).x + ImGui::CalcTextSize(ActionLabel).x +
-                       ImGui::CalcTextSize(TileLabel).x + ImGui::CalcTextSize(TabLabel).x + ImGui::CalcTextSize("Settings").x + ImGui::CalcTextSize("Focus project").x + ImGui::GetFrameHeight() +
+    const std::string GitHubText = State_.AppSettings.GitHubEnabled == true ? GitHubLabel() : std::string();
+    float RightWidth = ImGui::CalcTextSize("Settings").x + ImGui::CalcTextSize("View").x + ViewArrowWidth() +
                        SessionMeterWidth + WeeklyMeterWidth + ImGui::CalcTextSize("Session:").x + ImGui::CalcTextSize("Weekly:").x +
-                       2.0f * Scale * UiHelpers::USAGE_LABEL_GAP + 10.0f * Scale + 1.0f * Scale + ImGui::GetStyle().ItemSpacing.x + PadX * 6 + 48 * Scale;
-    if (GitHubShown == true)
-    {
-        RightWidth += ImGui::CalcTextSize(GitHubText.c_str()).x + PadX + ImGui::GetStyle().ItemSpacing.x;
-    }
+                       2.0f * Scale * UiHelpers::USAGE_LABEL_GAP + 10.0f * Scale + 1.0f * Scale + ImGui::GetStyle().ItemSpacing.x + PadX * 3 + 48 * Scale;
     RightWidth += PauseButtonWidth() + ImGui::GetStyle().ItemSpacing.x;
     RightWidth += AutoButtonWidth() + ImGui::GetStyle().ItemSpacing.x;
     float const Avail = ImGui::GetContentRegionAvail().x;
@@ -252,6 +241,7 @@ void App::DrawToolbar()
         ImGui::PopID();
         ImGui::SameLine();
 
+        std::vector<std::pair<std::string, std::pair<ImVec2, ImVec2>>> ChipRects;
         for (size_t ChipIndex = 0; ChipIndex < ChipLabels.size(); ChipIndex++)
         {
             const Session* const ChildSession = ChildSessions[ChipIndex];
@@ -286,6 +276,10 @@ void App::DrawToolbar()
                 {
                     RequestCloseSession(ChildSession->Rec.Id);
                 }
+                if (HasChildSessions(ChildSession->Rec.Id) == true && ImGui::MenuItem("Focus this session and its children") == true)
+                {
+                    FocusFamily(ChildSession->Rec.Id);
+                }
                 if (ImGui::MenuItem("Close All") == true)
                 {
                     for (const Session* const SiblingSession : ChildSessions)
@@ -312,6 +306,7 @@ void App::DrawToolbar()
             }
             DrawList->AddRectFilled(ChipPos, ImVec2(ChipPos.x + ChipWidth, ChipPos.y + ImGui::GetFrameHeight()), ChipBgColorU32_, 6);
             PeerVeins_.AddChip(ChildSession->Rec.Id, ChipPos, ImVec2(ChipPos.x + ChipWidth, ChipPos.y + ImGui::GetFrameHeight()));
+            ChipRects.push_back({FamilyRootId(*ChildSession, ChildSessions), {ChipPos, ImVec2(ChipPos.x + ChipWidth, ChipPos.y + ImGui::GetFrameHeight())}});
             if (IsActiveChip == true)
             {
                 DrawList->AddRect(ChipPos, ImVec2(ChipPos.x + ChipWidth, ChipPos.y + ImGui::GetFrameHeight()), AccentColor_, 6);
@@ -325,6 +320,22 @@ void App::DrawToolbar()
                               ChipCloseHovered == true ? WaitingColor_ : TextDisabledColorU32_, "x");
             ImGui::SameLine();
             ImGui::PopID();
+        }
+        for (size_t RunStart = 0; RunStart < ChipRects.size();)
+        {
+            size_t RunEnd = RunStart;
+            while (RunEnd + 1 < ChipRects.size() && ChipRects[RunEnd + 1].first == ChipRects[RunStart].first)
+            {
+                RunEnd++;
+            }
+            if (RunEnd > RunStart)
+            {
+                const float FamilyPad = 1.5f * Scale;
+                const ImU32 FamilyColor = UiHelpers::WithAlpha(UiHelpers::SessionTint(ChipRects[RunStart].first), 200);
+                DrawList->AddRect(ImVec2(ChipRects[RunStart].second.first.x - FamilyPad, ChipRects[RunStart].second.first.y - FamilyPad),
+                                  ImVec2(ChipRects[RunEnd].second.second.x + FamilyPad, ChipRects[RunEnd].second.second.y + FamilyPad), FamilyColor, 7.0f, 0, 1.5f * Scale);
+            }
+            RunStart = RunEnd + 1;
         }
         if (GroupHidden.empty() == false)
         {
@@ -345,54 +356,7 @@ void App::DrawToolbar()
     }
 
     ImGui::SameLine(Avail - RightWidth + 8 * Scale);
-    const std::function<void(const char*, const char*)> FilterButton = [&](const char* Label, const char* Mode)
-    {
-        bool const Active = State_.Ui.ActionFilter == Mode;
-        ImGui::PushStyleColor(ImGuiCol_Button,
-                              Active ? ImGui::ColorConvertU32ToFloat4(UiHelpers::WithAlpha(AccentColor_, 90)) : ImGui::GetStyleColorVec4(ImGuiCol_Button));
-        bool const Clicked = ImGui::Button(Label);
-        ImGui::PopStyleColor();
-        if (Clicked)
-        {
-            State_.Ui.ActionFilter = Active ? "all" : Mode;
-            MarkDirty();
-        }
-    };
-    FilterButton(AllLabel, "all");
-    ImGui::SameLine(0, 2);
-    FilterButton(RunningLabel, "running");
-    ImGui::SameLine(0, 2);
-    FilterButton(ActionLabel, "action");
-    ImGui::SameLine();
-    bool const TileMode = State_.Ui.Mode == "tile";
-    ImGui::PushStyleColor(ImGuiCol_Button,
-                          TileMode ? ImGui::ColorConvertU32ToFloat4(UiHelpers::WithAlpha(AccentColor_, 90)) : ImGui::GetStyleColorVec4(ImGuiCol_Button));
-    if (ImGui::Button(TileLabel))
-    {
-        State_.Ui.Mode = "tile";
-        MaximizedId_.clear();
-        MarkDirty();
-    }
-    ImGui::PopStyleColor();
-    ImGui::SameLine(0, 2);
-    ImGui::PushStyleColor(ImGuiCol_Button,
-                          TileMode == false ? ImGui::ColorConvertU32ToFloat4(UiHelpers::WithAlpha(AccentColor_, 90)) : ImGui::GetStyleColorVec4(ImGuiCol_Button));
-    if (ImGui::Button(TabLabel))
-    {
-        State_.Ui.Mode = "tabs";
-        MaximizedId_.clear();
-        MarkDirty();
-    }
-    ImGui::PopStyleColor();
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Focus project", &State_.Ui.FocusProjectOnClick) == true)
-    {
-        MarkDirty();
-    }
-    if (ImGui::IsItemHovered() == true)
-    {
-        ImGui::SetTooltip("Clicking a session in the sidebar shows only that project's open sessions");
-    }
+    DrawViewMenu(GitHubText);
     ImGui::SameLine();
     const ImVec2 DividerPos = ImGui::GetCursorScreenPos();
     const float DividerHeight = ImGui::GetFrameHeight();
@@ -432,22 +396,6 @@ void App::DrawToolbar()
         OpenModal(Modal::Usage);
     }
     ImGui::SameLine();
-    if (GitHubShown == true)
-    {
-        const Git::GitHubStatus::State GitHubState = ReadGitHubStatus().Value;
-        const ImVec4 GitHubColor = GitHubState == Git::GitHubStatus::State::LoggedIn ? ImGui::ColorConvertU32ToFloat4(DoneColor_)
-                                   : GitHubState == Git::GitHubStatus::State::Unknown ? TextDisabledColorV4_
-                                                                                      : WaitingColorV4_;
-        ImGui::PushStyleColor(ImGuiCol_Text, GitHubColor);
-        const bool GitHubClicked = ImGui::Button(GitHubText.c_str());
-        ImGui::PopStyleColor();
-        if (GitHubClicked == true)
-        {
-            GitHubLastCheckAt_ = -1.0e9;
-            OpenModal(Modal::GitHub);
-        }
-        ImGui::SameLine();
-    }
     DrawPauseButton();
     ImGui::SameLine();
     DrawAutoButton();
@@ -459,6 +407,7 @@ void App::DrawToolbar()
         PaneTitleScaleEdit_ = State_.AppSettings.PaneTitleScale;
         NotifyEdit_ = State_.AppSettings.Notifications;
         AutoStartEdit_ = State_.AppSettings.AutoStartWindow;
+        AskSessionNameEdit_ = State_.AppSettings.AskSessionName;
         ModelEdit_ = State_.AppSettings.DefaultModel;
         ModelCatalog_.Refresh(false, Session::Wake);
         PermissionModeEdit_ = State_.AppSettings.DefaultPermissionMode;
@@ -594,4 +543,87 @@ void App::ContinuePausedSessions()
     }
     PausedIds_.clear();
     ShowToast("Continued " + std::to_string(Continued) + " session" + (Continued == 1 ? "" : "s"));
+}
+
+float App::ViewArrowWidth() const
+{
+    return ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x;
+}
+
+void App::DrawViewMenu(const std::string& GitHubText)
+{
+    const float Scale = UiScale_;
+    const float ButtonWidth = ImGui::CalcTextSize("View").x + ViewArrowWidth() + ImGui::GetStyle().FramePadding.x * 2;
+    const ImVec2 ButtonPos = ImGui::GetCursorScreenPos();
+    if (ImGui::Button("##viewMenu", ImVec2(ButtonWidth, 0)) == true)
+    {
+        ImGui::OpenPopup("##viewPopup");
+    }
+    ImDrawList* const DrawList = ImGui::GetWindowDrawList();
+    const float FrameHeight = ImGui::GetFrameHeight();
+    DrawList->AddText(ImVec2(ButtonPos.x + ImGui::GetStyle().FramePadding.x, ButtonPos.y + ImGui::GetStyle().FramePadding.y), TextColorU32_, "View");
+    const float ArrowSize = 4.0f * Scale;
+    const ImVec2 ArrowCenter(ButtonPos.x + ButtonWidth - ImGui::GetStyle().FramePadding.x - ArrowSize - 1.0f * Scale, ButtonPos.y + FrameHeight * 0.5f);
+    DrawList->AddTriangleFilled(ImVec2(ArrowCenter.x - ArrowSize, ArrowCenter.y - ArrowSize * 0.5f), ImVec2(ArrowCenter.x + ArrowSize, ArrowCenter.y - ArrowSize * 0.5f),
+                                ImVec2(ArrowCenter.x, ArrowCenter.y + ArrowSize * 0.6f), TextColorU32_);
+    if (ImGui::IsItemHovered() == true)
+    {
+        ImGui::SetTooltip("Session filter, layout, project focus and GitHub");
+    }
+    if (ImGui::BeginPopup("##viewPopup") == false)
+    {
+        return;
+    }
+    ImGui::TextDisabled("Show sessions");
+    const std::array<std::pair<const char*, const char*>, 3> Filters = {{{"All", "all"}, {"Running", "running"}, {"Requires action", "action"}}};
+    for (const std::pair<const char*, const char*>& Filter : Filters)
+    {
+        const bool Active = State_.Ui.ActionFilter == Filter.second;
+        if (ImGui::MenuItem(Filter.first, nullptr, Active) == true)
+        {
+            State_.Ui.ActionFilter = Filter.second;
+            MarkDirty();
+        }
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("Layout");
+    const bool TileMode = State_.Ui.Mode == "tile";
+    if (ImGui::MenuItem("Tiles", nullptr, TileMode) == true)
+    {
+        State_.Ui.Mode = "tile";
+        MaximizedId_.clear();
+        MarkDirty();
+    }
+    if (ImGui::MenuItem("Tabs", nullptr, TileMode == false) == true)
+    {
+        State_.Ui.Mode = "tabs";
+        MaximizedId_.clear();
+        MarkDirty();
+    }
+    ImGui::Separator();
+    if (ImGui::Checkbox("Focus project", &State_.Ui.FocusProjectOnClick) == true)
+    {
+        MarkDirty();
+    }
+    if (ImGui::IsItemHovered() == true)
+    {
+        ImGui::SetTooltip("Clicking a session in the sidebar shows only that project's open sessions");
+    }
+    if (State_.AppSettings.GitHubEnabled == true)
+    {
+        ImGui::Separator();
+        const Git::GitHubStatus::State GitHubState = ReadGitHubStatus().Value;
+        const ImVec4 GitHubColor = GitHubState == Git::GitHubStatus::State::LoggedIn ? ImGui::ColorConvertU32ToFloat4(DoneColor_)
+                                   : GitHubState == Git::GitHubStatus::State::Unknown ? TextDisabledColorV4_
+                                                                                      : WaitingColorV4_;
+        ImGui::PushStyleColor(ImGuiCol_Text, GitHubColor);
+        const bool GitHubClicked = ImGui::MenuItem(GitHubText.c_str());
+        ImGui::PopStyleColor();
+        if (GitHubClicked == true)
+        {
+            GitHubLastCheckAt_ = -1.0e9;
+            OpenModal(Modal::GitHub);
+        }
+    }
+    ImGui::EndPopup();
 }

@@ -10,6 +10,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 include(FetchContent)
+set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
 
 # ---- dependencies (all fetched at configure time) -------------------------
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -53,9 +54,10 @@ set(APP_SOURCES
   Source/Main.cpp Source/App.cpp Source/Session.cpp Source/Terminal.cpp
   Source/Git.cpp Source/Store.cpp
   Source/Account.cpp Source/Input.cpp Source/Modals.cpp Source/NightlyBuildWindow.cpp
-  Source/Pane.cpp Source/MainPanels.cpp Source/ReviewWindow.cpp Source/SessionRequestsPoll.cpp
+  Source/Pane.cpp Source/PaneModelPicker.cpp Source/MainPanels.cpp Source/EmptyMain.cpp Source/ReviewWindow.cpp Source/SessionRequestsPoll.cpp
   Source/ScreenshotPanel.cpp Source/QuickSearch.cpp Source/Sidebar.cpp Source/TerminalView.cpp
-  Source/Toolbar.cpp Source/StbImage.cpp Source/PeerOverlay.cpp Source/GeneralSession.cpp)
+  Source/Toolbar.cpp Source/StbImage.cpp Source/PeerOverlay.cpp Source/GeneralSession.cpp
+  Source/PromptSubmit.cpp Source/SidebarSessionTree.cpp Source/NewSessionStart.cpp Source/ChildProgress.cpp Source/BackgroundWatch.cpp)
 if(WIN32)
   list(APPEND APP_SOURCES Source/PtyWin.cpp Source/PlatformWin.cpp Resources/App.rc)
 else()
@@ -66,6 +68,17 @@ add_executable(claude-terminal ${APP_SOURCES})
 target_compile_definitions(claude-terminal PRIVATE CLAUDE_TERMINAL_VERSION="${PROJECT_VERSION}")
 target_include_directories(claude-terminal PRIVATE Source ${stb_SOURCE_DIR})
 target_link_libraries(claude-terminal PRIVATE imgui vterm nlohmann_json::nlohmann_json OpenGL::GL)
+target_precompile_headers(claude-terminal PRIVATE
+  <imgui.h>
+  <nlohmann/json.hpp>
+  <string>
+  <vector>
+  <map>
+  <unordered_map>
+  <memory>
+  <functional>
+  <algorithm>)
+set_source_files_properties(Source/StbImage.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
 if(WIN32)
   target_compile_definitions(claude-terminal PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)

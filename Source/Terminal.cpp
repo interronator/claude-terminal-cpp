@@ -274,7 +274,7 @@ bool Terminal::FindInputText(int& FirstRow, int& FirstCol, int& LastRow, int& La
             RuleRows.push_back(Row);
         }
     }
-    if (RuleRows.size() < 2 || RuleRows[0] - RuleRows[1] < 2 || RuleRows[0] - RuleRows[1] > 14)
+    if (RuleRows.size() < 2 || RuleRows[0] - RuleRows[1] < 2 || RuleRows[0] - RuleRows[1] > 14 || RuleRows[0] < Rows_ - 5)
     {
         return false;
     }

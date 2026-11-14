@@ -49,7 +49,7 @@ void App::DrawSidebar(float Width)
     // itself uses for its own hover/selected highlight, instead of looking like a separate pill button.
     const std::function<bool(const char*)> IconButton = [&](const char* Label)
     {
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * Scale);
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
@@ -187,11 +187,8 @@ void App::DrawSidebar(float Width)
         }
         if (ImGui::BeginPopupContextItem("##projmenu"))
         {
-            if (ImGui::MenuItem("New session"))
-            {
-                ModalTarget_ = CurrentProject.Id;
-                OpenModal(Modal::NewSession);
-            }
+            DrawNewSessionChoices(CurrentProject);
+            ImGui::Separator();
             if (ImGui::MenuItem("Rename project"))
             {
                 ModalTarget_ = CurrentProject.Id;
@@ -230,38 +227,23 @@ void App::DrawSidebar(float Width)
             }
             ImGui::EndPopup();
         }
-        ImGui::SameLine(ImGui::GetContentRegionMax().x - 54 * Scale);
+        ImGui::SameLine(ImGui::GetContentRegionMax().x - 28 * Scale);
         if (IconButton("+"))
         {
-            ModalTarget_ = CurrentProject.Id;
-            OpenModal(Modal::NewSession);
+            BeginNewSession(CurrentProject.Id);
         }
         if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("New session");
+            ImGui::SetTooltip("New session (right-click for more)");
         }
-        ImGui::SameLine(ImGui::GetContentRegionMax().x - 28 * Scale);
-        if (IconButton("++"))
+        if (ImGui::BeginPopupContextItem("##plusmenu") == true)
         {
-            std::string Err;
-            Session* const ContinuedSession = CreateSession(CurrentProject.Id, "", false, true, Err);
-            if (ContinuedSession != nullptr)
-            {
-                State_.Ui.Collapsed[CurrentProject.Id] = false;
-                OpenSession(ContinuedSession->Rec.Id);
-            }
-            else
-            {
-                ShowToast(Err, true);
-            }
-        }
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("New session continuing the last conversation");
+            DrawNewSessionChoices(CurrentProject);
+            ImGui::EndPopup();
         }
         if (Worst != nullptr)
         {
-            ImVec2 const DotCenter(ImGui::GetWindowPos().x + ImGui::GetContentRegionMax().x - 68 * Scale,
+            ImVec2 const DotCenter(ImGui::GetWindowPos().x + ImGui::GetContentRegionMax().x - 42 * Scale,
                              ImGui::GetItemRectMin().y + ImGui::GetItemRectSize().y * 0.5f);
             DrawStatusDot(ImGui::GetWindowDrawList(), DotCenter, 4.5f * Scale, *Worst);
         }
@@ -276,116 +258,11 @@ void App::DrawSidebar(float Width)
             ImVec2 const GroupStart = ImGui::GetCursorScreenPos();
             float const GroupWidth = ImGui::GetContentRegionAvail().x;
             bool Any = false;
-            for (const std::unique_ptr<Session>& SessionPtr : Sessions_)
+            const std::vector<SidebarRow> Rows = BuildSidebarRows(CurrentProject.Id);
+            for (const SidebarRow& Row : Rows)
             {
-                Session& CurrentSession = *SessionPtr;
-                if (CurrentSession.Rec.ProjectId != CurrentProject.Id)
-                {
-                    continue;
-                }
                 Any = true;
-                ImGui::PushID(CurrentSession.Rec.Id.c_str());
-                bool const IsOpen = std::find(State_.Ui.OpenIds.begin(), State_.Ui.OpenIds.end(), CurrentSession.Rec.Id) != State_.Ui.OpenIds.end();
-                bool const IsActive = State_.Ui.ActiveId == CurrentSession.Rec.Id;
-                float const RowHeight = ImGui::GetFrameHeight();
-                float const RowWidth = ImGui::GetContentRegionAvail().x - 26 * Scale;
-                ImGui::Indent(12 * Scale);
-                ImVec2 const RowPos = ImGui::GetCursorScreenPos();
-                float const CloseWidth = RowCloseButtonWidth();
-                float const SelectableWidth = RowWidth - 10 * Scale + CloseWidth;
-                ImVec2 const ClosePos(RowPos.x + SelectableWidth - CloseWidth, RowPos.y);
-                bool const CloseHovered = ImGui::IsWindowHovered() == true &&
-                                          ImGui::IsMouseHoveringRect(ClosePos, ImVec2(ClosePos.x + CloseWidth, ClosePos.y + RowHeight)) == true;
-                // Hovering the "x" steals hover from the row, so paint the row as hovered ourselves to keep them one piece.
-                bool const RowHighlighted = IsActive == true || CloseHovered == true;
-                if (IsActive == false && CloseHovered == true)
-                {
-                    ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
-                }
-                bool const RowClicked = ImGui::Selectable("##s", RowHighlighted, ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_AllowDoubleClick,
-                                                          ImVec2(SelectableWidth, RowHeight));
-                if (IsActive == false && CloseHovered == true)
-                {
-                    ImGui::PopStyleColor();
-                }
-                if (RowClicked == true)
-                {
-                    OpenSessionFromSidebar(CurrentSession.Rec.Id);
-                    if (ImGui::IsMouseDoubleClicked(0))
-                    {
-                        ModalTarget_ = CurrentSession.Rec.Id;
-                        RenameIsProject_ = false;
-                        std::snprintf(NameBuffer_, sizeof NameBuffer_, "%s", CurrentSession.Rec.Name.c_str());
-                        OpenModal(Modal::Rename);
-                    }
-                }
-                ImDrawList* DrawList = ImGui::GetWindowDrawList();
-                if (IsOpen && IsActive == false)
-                {
-                    DrawList->AddRectFilled(ImVec2(RowPos.x - 4 * Scale, RowPos.y + 3), ImVec2(RowPos.x - 2 * Scale, RowPos.y + RowHeight - 3),
-                                            IdleColor_);
-                }
-                DrawStatusDot(DrawList, ImVec2(RowPos.x + 9 * Scale, RowPos.y + RowHeight * 0.5f), 4.5f * Scale, CurrentSession);
-                DrawList->AddText(ImVec2(RowPos.x + 22 * Scale, RowPos.y + (RowHeight - ImGui::GetFontSize()) * 0.5f), TextColorU32_,
-                                  CurrentSession.Rec.Name.c_str());
-                if (CurrentSession.Rec.WorktreeInfo)
-                {
-                    const char* const Tag = "wt";
-                    ImVec2 const TagSize = ImGui::CalcTextSize(Tag);
-                    DrawList->AddText(ImVec2(RowPos.x + RowWidth - 12 * Scale - TagSize.x - 6 * Scale, RowPos.y + (RowHeight - TagSize.y) * 0.5f),
-                                      TextDisabledColorU32_, Tag);
-                }
-                if (ImGui::BeginDragDropSource() == true)
-                {
-                    ImGui::SetDragDropPayload("SESSION_REORDER", CurrentSession.Rec.Id.c_str(), CurrentSession.Rec.Id.size() + 1);
-                    ImGui::TextUnformatted(CurrentSession.Rec.Name.c_str());
-                    ImGui::EndDragDropSource();
-                }
-                if (ImGui::BeginDragDropTarget() == true)
-                {
-                    const ImGuiPayload* const Payload = ImGui::AcceptDragDropPayload("SESSION_REORDER");
-                    if (Payload != nullptr)
-                    {
-                        SessionDragSourceId = static_cast<const char*>(Payload->Data);
-                        SessionDragTargetId = CurrentSession.Rec.Id;
-                    }
-                    ImGui::EndDragDropTarget();
-                }
-                if (ImGui::IsItemHovered() && ImGui::IsMouseDragging(0) == false)
-                {
-                    ImGui::SetTooltip("%s%s%s", CurrentSession.Rec.Cwd.c_str(), CurrentSession.Rec.WorktreeInfo ? "\nbranch: " : "",
-                                      CurrentSession.Rec.WorktreeInfo ? CurrentSession.Rec.WorktreeInfo->Branch.c_str() : "");
-                }
-                if (ImGui::BeginPopupContextItem("##sessmenu"))
-                {
-                    if (ImGui::MenuItem("Open"))
-                    {
-                        OpenSessionFromSidebar(CurrentSession.Rec.Id);
-                    }
-                    if (ImGui::MenuItem("Rename"))
-                    {
-                        ModalTarget_ = CurrentSession.Rec.Id;
-                        RenameIsProject_ = false;
-                        std::snprintf(NameBuffer_, sizeof NameBuffer_, "%s", CurrentSession.Rec.Name.c_str());
-                        OpenModal(Modal::Rename);
-                    }
-                    if (IsOpen && ImGui::MenuItem("Hide pane"))
-                    {
-                        HideSession(CurrentSession.Rec.Id);
-                    }
-                    ImGui::Separator();
-                    if (ImGui::MenuItem("Close session..."))
-                    {
-                        RequestCloseSession(CurrentSession.Rec.Id);
-                    }
-                    ImGui::EndPopup();
-                }
-                if (RowCloseButton(ClosePos, CloseHovered) == true)
-                {
-                    RequestCloseSession(CurrentSession.Rec.Id);
-                }
-                ImGui::Unindent(12 * Scale);
-                ImGui::PopID();
+                DrawSidebarSessionRow(Row, SessionDragSourceId, SessionDragTargetId);
             }
             if (Any == false)
             {
@@ -471,15 +348,20 @@ void App::DrawSidebar(float Width)
             const ImVec2 ClosePos(RowPos.x + RowWidth - CloseWidth, RowPos.y);
             const bool CloseHovered = ImGui::IsWindowHovered() == true &&
                                       ImGui::IsMouseHoveringRect(ClosePos, ImVec2(ClosePos.x + CloseWidth, ClosePos.y + ImGui::GetFrameHeight())) == true;
-            if (CloseHovered == true)
-            {
-                ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
-            }
-            const bool RowClicked = ImGui::Selectable("##archiverow", CloseHovered, ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_AllowDoubleClick,
+            const ImU32 ArchiveHoverFill = ImGui::GetColorU32(ImGuiCol_HeaderHovered);
+            const ImU32 ArchivePressFill = ImGui::GetColorU32(ImGuiCol_HeaderActive);
+            const ImVec4 ArchiveClear(0, 0, 0, 0);
+            ImGui::PushStyleColor(ImGuiCol_Header, ArchiveClear);
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ArchiveClear);
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ArchiveClear);
+            const bool RowClicked = ImGui::Selectable("##archiverow", false, ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_AllowDoubleClick,
                                                       ImVec2(RowWidth, ImGui::GetFrameHeight()));
-            if (CloseHovered == true)
+            ImGui::PopStyleColor(3);
+            if (ImGui::IsItemActive() == true || ImGui::IsItemHovered() == true || CloseHovered == true)
             {
-                ImGui::PopStyleColor();
+                ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(RowPos.x, RowPos.y + 1.0f * Scale),
+                                                          ImVec2(RowPos.x + RowWidth, RowPos.y + ImGui::GetFrameHeight() - 1.0f * Scale),
+                                                          ImGui::IsItemActive() == true ? ArchivePressFill : ArchiveHoverFill, 5.0f * Scale);
             }
             if (RowClicked == true &&
                 ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) == true && Archived.Rec.ClaudeSessionId.empty() == false)

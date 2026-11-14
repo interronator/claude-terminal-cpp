@@ -32,6 +32,59 @@ public:
         return IM_COL32(Red, Green, Blue, 255);
     }
 
+    // A row of joined toggle buttons, one per label. Returns true when the selection changes.
+    static bool SegmentedControl(const char* const Id, const std::initializer_list<const char*> Labels, int& Selected, const ImU32 AccentColor)
+    {
+        const ImGuiStyle& Style = ImGui::GetStyle();
+        const float Height = ImGui::GetFrameHeight();
+        const float PadX = Style.FramePadding.x * 1.6f;
+        const float Inset = Height * 0.1f;
+        float Width = 0.0f;
+        for (const char* const Label : Labels)
+        {
+            Width += ImGui::CalcTextSize(Label).x + PadX * 2.0f;
+        }
+        const ImVec2 Origin = ImGui::GetCursorScreenPos();
+        ImDrawList* const DrawList = ImGui::GetWindowDrawList();
+        DrawList->AddRectFilled(Origin, ImVec2(Origin.x + Width, Origin.y + Height), ImGui::GetColorU32(ImGuiCol_FrameBg), Style.FrameRounding);
+        ImGui::PushID(Id);
+        bool Changed = false;
+        float SegmentLeft = Origin.x;
+        int Index = 0;
+        for (const char* const Label : Labels)
+        {
+            const ImVec2 TextSize = ImGui::CalcTextSize(Label);
+            const float SegmentWidth = TextSize.x + PadX * 2.0f;
+            ImGui::SetCursorScreenPos(ImVec2(SegmentLeft, Origin.y));
+            ImGui::PushID(Index);
+            if (ImGui::InvisibleButton("##segment", ImVec2(SegmentWidth, Height)) == true && Selected != Index)
+            {
+                Selected = Index;
+                Changed = true;
+            }
+            const bool Hovered = ImGui::IsItemHovered();
+            ImGui::PopID();
+            const ImVec2 SegmentMin(SegmentLeft + Inset, Origin.y + Inset);
+            const ImVec2 SegmentMax(SegmentLeft + SegmentWidth - Inset, Origin.y + Height - Inset);
+            if (Selected == Index)
+            {
+                DrawList->AddRectFilled(SegmentMin, SegmentMax, WithAlpha(AccentColor, 90), Style.FrameRounding);
+            }
+            else if (Hovered == true)
+            {
+                DrawList->AddRectFilled(SegmentMin, SegmentMax, ImGui::GetColorU32(ImGuiCol_FrameBgHovered), Style.FrameRounding);
+            }
+            const ImU32 TextColor = ImGui::GetColorU32(Selected == Index || Hovered == true ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+            DrawList->AddText(ImVec2(SegmentLeft + PadX, Origin.y + (Height - TextSize.y) * 0.5f), TextColor, Label);
+            SegmentLeft += SegmentWidth;
+            Index++;
+        }
+        ImGui::PopID();
+        ImGui::SetCursorScreenPos(Origin);
+        ImGui::Dummy(ImVec2(Width, Height));
+        return Changed;
+    }
+
     // A stable color per session, used on its pane header and on its screenshot cards so the two read as a pair.
     static ImU32 SessionTint(const std::string& SessionId)
     {

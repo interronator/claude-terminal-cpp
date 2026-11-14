@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <cstdint>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -27,6 +28,7 @@ public:
         std::string Name;       // "Opus 5.5"
         std::string Family;     // "opus"
         std::string CreatedAt;  // ISO 8601, so newer sorts after older
+        std::int64_t MaxInputTokens = 0;  // 0 = not reported
     };
 
     explicit ModelCatalog(std::filesystem::path CachePath) : Shared_(std::make_shared<SharedState>()), CachePath_(std::move(CachePath))
@@ -40,20 +42,55 @@ public:
         return Shared_->Models.empty() == true ? BuiltIn() : Shared_->Models;
     }
 
-    // Starts a background fetch when the list is older than a day (or always, with Force). Wake runs once it lands.
+    // Context window in tokens for a model id (dated ids match their undated form), or 0 when unknown.
+    std::int64_t ContextWindowFor(const std::string& Id) const
+    {
+        return FindLocked(Id).MaxInputTokens;
+    }
+
+    // Id is empty in the returned copy when the model is not in the list.
+    Model Find(const std::string& Id) const
+    {
+        return FindLocked(Id);
+    }
+
+    bool Knows(const std::string& Id) const
+    {
+        return FindLocked(Id).Id.empty() == false;
+    }
+
+    // Asks for a fresh list when a session reports a model that is not in it yet. Retries at most every 10 minutes, doubling after each failure up to about 5 hours.
+    void RefreshIfUnknown(const std::string& Id, const std::function<void()>& Wake)
+    {
+        if (Id.empty() == true || Id.rfind("claude-", 0) != 0 || Knows(Id) == true)
+        {
+            return;
+        }
+        Refresh(true, Wake);
+    }
+
+    // Starts a background fetch when the list is older than a day (or when forced, at most every 10 minutes). Wake runs once it lands.
     void Refresh(const bool Force, const std::function<void()>& Wake)
     {
         constexpr std::time_t STALE_SECONDS = 24 * 60 * 60;
+        constexpr std::time_t FORCE_COOLDOWN_SECONDS = 10 * 60;
         {
             std::lock_guard<std::mutex> const Guard(Shared_->Mutex);
             if (Shared_->InFlight == true)
             {
                 return;
             }
-            if (Force == false && Shared_->Models.empty() == false && std::time(nullptr) - Shared_->FetchedAt < STALE_SECONDS)
+            const std::time_t Current = std::time(nullptr);
+            if (Force == false && Shared_->Models.empty() == false && Current - Shared_->FetchedAt < STALE_SECONDS)
             {
                 return;
             }
+            const int Doublings = std::min(Shared_->FailedAttempts, MAX_BACKOFF_DOUBLINGS);
+            if (Force == true && Current - Shared_->LastAttemptAt < FORCE_COOLDOWN_SECONDS * (std::time_t(1) << Doublings))
+            {
+                return;
+            }
+            Shared_->LastAttemptAt = Current;
             Shared_->InFlight = true;
         }
         const std::shared_ptr<SharedState> Shared = Shared_;
@@ -65,8 +102,13 @@ public:
                 {
                     std::lock_guard<std::mutex> const Guard(Shared->Mutex);
                     Shared->InFlight = false;
-                    if (Fetched.empty() == false)
+                    if (Fetched.empty() == true)
                     {
+                        Shared->FailedAttempts++;
+                    }
+                    else
+                    {
+                        Shared->FailedAttempts = 0;
                         Shared->Models = std::move(Fetched);
                         Shared->FetchedAt = std::time(nullptr);
                         SaveCache(CachePath, Shared->Models, Shared->FetchedAt);
@@ -86,8 +128,42 @@ private:
         std::mutex Mutex;
         std::vector<Model> Models;
         std::time_t FetchedAt = 0;
+        std::time_t LastAttemptAt = 0;
+        int FailedAttempts = 0;
         bool InFlight = false;
     };
+
+    // Id is empty in the returned copy when nothing matches.
+    Model FindLocked(const std::string& Id) const
+    {
+        {
+            std::lock_guard<std::mutex> const Guard(Shared_->Mutex);
+            const Model Fetched = BestMatch(Shared_->Models, Id);
+            if (Fetched.Id.empty() == false)
+            {
+                return Fetched;
+            }
+        }
+        return BestMatch(BuiltIn(), Id);
+    }
+
+    // Exact id wins; otherwise the longest listed id that the dated id starts with.
+    static Model BestMatch(const std::vector<Model>& Models, const std::string& Id)
+    {
+        Model Prefix;
+        for (const Model& Current : Models)
+        {
+            if (Current.Id == Id)
+            {
+                return Current;
+            }
+            if (Id.size() > Current.Id.size() && Current.Id.size() > Prefix.Id.size() && Id.rfind(Current.Id + "-", 0) == 0)
+            {
+                Prefix = Current;
+            }
+        }
+        return Prefix;
+    }
 
     // Used before the first successful fetch.
     static std::vector<Model> BuiltIn()
@@ -126,7 +202,7 @@ private:
             }
             for (const nlohmann::json& Entry : Response["data"])
             {
-                Model Parsed = FromJson(Entry, "id", "display_name", "created_at");
+                Model Parsed = FromJson(Entry, "id", "display_name", "created_at", "max_input_tokens");
                 if (Parsed.Id.empty() == false)
                 {
                     Found.push_back(std::move(Parsed));
@@ -142,7 +218,8 @@ private:
         return Found;
     }
 
-    static Model FromJson(const nlohmann::json& Entry, const char* const IdKey, const char* const NameKey, const char* const CreatedKey)
+    static Model FromJson(const nlohmann::json& Entry, const char* const IdKey, const char* const NameKey, const char* const CreatedKey,
+                          const char* const TokensKey)
     {
         Model Parsed;
         if (Entry.is_object() == false)
@@ -152,6 +229,11 @@ private:
         Parsed.Id = StringField(Entry, IdKey);
         Parsed.Name = StringField(Entry, NameKey);
         Parsed.CreatedAt = StringField(Entry, CreatedKey);
+        const nlohmann::json::const_iterator Tokens = Entry.find(TokensKey);
+        if (Tokens != Entry.end() && Tokens->is_number_integer() == true)
+        {
+            Parsed.MaxInputTokens = Tokens->get<std::int64_t>();
+        }
         const std::string Prefix = "Claude ";
         if (Parsed.Name.rfind(Prefix, 0) == 0)
         {
@@ -202,7 +284,7 @@ private:
         std::vector<Model> Loaded;
         for (const nlohmann::json& Entry : Root["models"])
         {
-            Model Parsed = FromJson(Entry, "id", "name", "createdAt");
+            Model Parsed = FromJson(Entry, "id", "name", "createdAt", "maxInputTokens");
             if (Parsed.Id.empty() == false)
             {
                 Loaded.push_back(std::move(Parsed));
@@ -218,7 +300,7 @@ private:
         nlohmann::json List = nlohmann::json::array();
         for (const Model& Current : Models)
         {
-            List.push_back({{"id", Current.Id}, {"name", Current.Name}, {"createdAt", Current.CreatedAt}});
+            List.push_back({{"id", Current.Id}, {"name", Current.Name}, {"createdAt", Current.CreatedAt}, {"maxInputTokens", Current.MaxInputTokens}});
         }
         std::error_code ErrorCode;
         std::filesystem::create_directories(Path.parent_path(), ErrorCode);
@@ -231,6 +313,7 @@ private:
     }
 
     static constexpr int MAX_PAGES = 10;
+    static constexpr int MAX_BACKOFF_DOUBLINGS = 5;
 
     std::shared_ptr<SharedState> Shared_;
     std::filesystem::path CachePath_;

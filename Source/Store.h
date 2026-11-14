@@ -23,8 +23,11 @@ struct SessionRec
     std::string Name;
     std::string Cwd;
     std::string ClaudeSessionId;
+    std::string ParentId;  // app session id of the session that started this one; empty for top-level sessions
+    std::string Model;  // picked in the pane header; empty = the app default
     bool Started = false;
     bool WasRunning = false;
+    bool AutoTitle = false;  // still waiting to be named from the first prompt
     std::optional<Worktree> WorktreeInfo;
     long long CreatedAt = 0;
 };
@@ -119,7 +122,8 @@ struct Settings
     bool Notifications = true;
     bool GitHubEnabled = false;
     bool AutoStartWindow = false;
-    std::string DefaultModel;           // empty = Claude's own default
+    bool AskSessionName = false;  // show the New Claude session window instead of starting right away
+    std::string DefaultModel;          // empty = Claude's own default
     std::string DefaultPermissionMode;  // empty = Claude's own default
     int FontSize = 16;  // terminal font, in points at 100% scale
     int PaneTitleScale = 100;  // session title text size in the pane header, percent of the normal UI text

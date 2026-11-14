@@ -45,7 +45,7 @@ void App::DrawModals()
         case Modal::Usage: Title = "Usage"; break;
         case Modal::GitHub: Title = "GitHub"; break;
         case Modal::Search: Title = "Search"; break;
-        case Modal::Review: Title = "GitHub review"; break;
+        case Modal::Review: Title = "Git"; break;
         default: break;
     }
     std::string const PopupId = std::string(Title) + "###modal";
@@ -161,6 +161,12 @@ void App::DrawAddProjectModal(const bool Enter)
         if (AddProjectPath(PathBuffer_, ModalError_, &Id))
         {
             State_.Ui.Collapsed[Id] = false;
+            if (State_.AppSettings.AskSessionName == false)
+            {
+                CloseModal();
+                BeginNewSession(Id);
+                return;
+            }
             ModalTarget_ = Id;
             OpenModal(Modal::NewSession);
             ImGui::CloseCurrentPopup();
@@ -382,6 +388,7 @@ void App::DrawSettingsModal()
     ImGui::Checkbox("Desktop notifications when a background session needs you", &NotifyEdit_);
     ImGui::Checkbox("Start the 5-hour usage window as soon as it is free (sends a tiny Haiku message)", &AutoStartEdit_);
     ImGui::Checkbox("Use GitHub access (shows login status; needs the gh CLI)", &GitHubEdit_);
+    ImGui::Checkbox("Show the New session window (name, worktree, continue) instead of starting right away", &AskSessionNameEdit_);
     ImGui::TextDisabled("Command changes apply the next time a session starts. Model and mode apply to new conversations only.");
 
     ImGui::Separator();
@@ -454,6 +461,7 @@ void App::DrawSettingsModal()
         State_.AppSettings.ClaudeCommand = Command.empty() ? "claude" : Command;
         State_.AppSettings.Notifications = NotifyEdit_;
         State_.AppSettings.AutoStartWindow = AutoStartEdit_;
+        State_.AppSettings.AskSessionName = AskSessionNameEdit_;
         State_.AppSettings.DefaultModel = ModelEdit_;
         State_.AppSettings.DefaultPermissionMode = PermissionModeEdit_;
         State_.AppSettings.Keys = KeysEdit_;

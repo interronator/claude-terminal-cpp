@@ -75,7 +75,7 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
     const float TitleEndX = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
 
     const std::map<std::string, TranscriptScanner>::const_iterator Scanner = TranscriptScanners_.find(CurrentSession.Rec.Id);
-    const int ContextPercent = Scanner != TranscriptScanners_.end() ? Scanner->second.ContextPercent() : -1;
+    const int ContextPercent = Scanner != TranscriptScanners_.end() ? Scanner->second.ContextPercent(ContextWindowOf(Scanner->second)) : -1;
 
     const char* const MaximizeLabel = MaximizedId_ == CurrentSession.Rec.Id ? "Restore" : "Max";
     const float ButtonPad = 5 * Scale * 2;
@@ -86,18 +86,19 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
     std::string const Shortcut = "Alt+" + std::to_string(Index + 1);
     const float ShortcutWidth = ImGui::CalcTextSize(Shortcut.c_str()).x;
     const float ShortcutX = Size.x - ButtonsWidth - ShortcutWidth - ItemGap * (HasMaximize ? 4 : 3) - 4 * Scale;
+    float ContextEndX = TitleEndX;
     if (ContextPercent >= 0)
     {
-        const std::string ContextText = "ctx " + std::to_string(ContextPercent) + "%";
+        const bool WideEnough = Size.x >= 640 * Scale;
+        const float BarWidth = WideEnough == true ? 90 * Scale : 0.0f;
+        const std::string ContextText = (WideEnough == true ? "" : "ctx ") + std::to_string(ContextPercent) + "%";
         const float ContextX = TitleEndX + 24 * Scale;
-        if (ContextX + ImGui::CalcTextSize(ContextText.c_str()).x <= ShortcutX - ItemGap)
+        const float ContextWidth = ImGui::CalcTextSize(ContextText.c_str()).x + (WideEnough == true ? BarWidth + 6 * Scale : 0.0f);
+        if (ContextX + ContextWidth <= ShortcutX - ItemGap)
         {
-            ImGui::SetCursorPos(ImVec2(ContextX, (HeaderHeight - ImGui::GetTextLineHeight()) * 0.5f));
-            ImGui::TextColored(ContextColor(ContextPercent), "%s", ContextText.c_str());
-            if (ImGui::IsItemHovered() == true)
-            {
-                ImGui::SetTooltip("Share of Claude's context window in use");
-            }
+            ImGui::SetCursorPos(ImVec2(ContextX, 0.0f));
+            DrawContextMeter(CurrentSession, BarWidth, HeaderHeight);
+            ContextEndX = ContextX + ContextWidth;
         }
     }
     ImGui::SetCursorPos(ImVec2(ShortcutX, (HeaderHeight - ImGui::GetFrameHeight()) * 0.5f));
@@ -160,19 +161,18 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
     ImGui::PopID();
     ImGui::PopStyleVar();
 
-    const bool GitHubReady = State_.AppSettings.GitHubEnabled == true && ReadGitHubStatus().Value == Git::GitHubStatus::State::LoggedIn;
-    const bool GitActionsEnabled = GitHubReady == true && CurrentSession.IsRunning() == true;
     const float GitPad = 5 * Scale * 2;
-    const bool HasLiveButton = IsUnrealSession(CurrentSession);
+    const bool LiveOpen = LiveViewIds_.count(CurrentSession.Rec.Id) > 0;
+    const bool HasLiveButton = IsUnrealSession(CurrentSession) == true && (LiveOpen == true || HasFreshLiveFrame(PollLiveFrame(CurrentSession)) == true);
+    const float ModelPickerWidth = PaneModelPickerWidth(CurrentSession) + ItemGap;
     const float LiveButtonWidth = HasLiveButton == true ? ImGui::CalcTextSize(LIVE_BUTTON_LABEL).x + GitPad + ItemGap : 0.0f;
     const Handoff* const PendingHandoff = PollHandoff(CurrentSession);
     const char* const HandoffLabel = PendingHandoff == nullptr ? "Handoff###handoff" : PendingHandoff->Ready == true ? "Continue fresh###handoff" : "Handoff...###handoff";
     const float HandoffWidth = ImGui::CalcTextSize(HandoffLabel, nullptr, true).x + GitPad + ItemGap;
-    const float GitButtonsWidth = ImGui::CalcTextSize("Log").x + ImGui::CalcTextSize("Review").x + ImGui::CalcTextSize("Commit").x + ImGui::CalcTextSize("Push").x +
-                                  GitPad * 4 + ItemGap * 3 + LiveButtonWidth + HandoffWidth;
+    const float GitButtonsWidth = ImGui::CalcTextSize("Git").x + GitPad + LiveButtonWidth + HandoffWidth + ModelPickerWidth;
     const float RightStartX = Size.x - ButtonsWidth - ShortcutWidth - ItemGap * (HasMaximize ? 4 : 3) - 4 * Scale;
     const float GitStartX = std::min((Size.x - GitButtonsWidth) * 0.5f, RightStartX - ItemGap * 2 - GitButtonsWidth);
-    if (GitStartX >= TitleEndX + ItemGap * 2)
+    if (GitStartX >= ContextEndX + ItemGap * 2)
     {
         const float GitButtonHeight = ImGui::GetTextLineHeight() + 2 * Scale;
         ImGui::SetCursorPos(ImVec2(GitStartX, (HeaderHeight - GitButtonHeight) * 0.5f));
@@ -181,14 +181,11 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4(UiHelpers::WithAlpha(AccentColor_, 95)));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::ColorConvertU32ToFloat4(UiHelpers::WithAlpha(AccentColor_, 150)));
         ImGui::PushID("gitActions");
-        if (ImGui::Button("Log") == true)
-        {
-            ProjectLogWindow_.Open(CurrentSession.Rec.ProjectId);
-        }
-        if (ImGui::IsItemHovered() == true)
-        {
-            ImGui::SetTooltip("What has been done in this project, by hour, day and week, plus notes");
-        }
+        ImGui::PopStyleColor(3);
+        DrawPaneModelPicker(CurrentSession, ModelPickerWidth - ItemGap);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(UiHelpers::WithAlpha(AccentColor_, 45)));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4(UiHelpers::WithAlpha(AccentColor_, 95)));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::ColorConvertU32ToFloat4(UiHelpers::WithAlpha(AccentColor_, 150)));
         ImGui::SameLine(0, ItemGap);
         const bool HandoffReady = PendingHandoff != nullptr && PendingHandoff->Ready == true;
         if (HandoffReady == true)
@@ -263,7 +260,7 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
             {
                 ImGui::PopStyleColor();
             }
-            const bool HasPreview = HasFreshLiveFrame(PollLiveFrame(CurrentSession));
+            const bool HasPreview = HasFreshLiveFrame(PollLiveFrame(CurrentSession)) == true;
             const ImVec2 ButtonMin = ImGui::GetItemRectMin();
             const ImVec2 ButtonMax = ImGui::GetItemRectMax();
             const ImVec2 DotCenter(ButtonMin.x + 5 * Scale + 3.5f * Scale, (ButtonMin.y + ButtonMax.y) * 0.5f);
@@ -271,51 +268,23 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
             if (ImGui::IsItemHovered() == true)
             {
                 ImGui::SetTooltip("%s", HasPreview == true ? "Live picture available: show what this session's Unreal editor or game is drawing"
-                                                           : "Nothing to preview right now (no live capture running for this session)");
+                                                           : "The live capture stopped. Click to close the live view");
             }
             ImGui::SameLine(0, ItemGap);
         }
-        ImGui::BeginDisabled(GitActionsEnabled == false);
-        const bool CommitClicked = ImGui::Button("Commit");
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) == true)
-        {
-            ImGui::SetTooltip("%s", GitActionsEnabled == true ? "Ask Claude to commit the current changes"
-                                    : GitHubReady == true      ? "Session is not running"
-                                                               : "Enable GitHub access and log in to use this");
-        }
-        ImGui::SameLine(0, ItemGap);
-        const bool ReviewClicked = ImGui::Button("Review");
+        const bool GitClicked = ImGui::Button("Git");
         if (ImGui::IsItemHovered() == true)
         {
-            ImGui::SetTooltip("Review commits before pushing");
-        }
-        ImGui::SameLine(0, ItemGap);
-        ImGui::BeginDisabled(GitActionsEnabled == false);
-        const bool PushClicked = ImGui::Button("Push");
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) == true)
-        {
-            ImGui::SetTooltip("%s", GitActionsEnabled == true ? "Ask Claude to push the current branch to GitHub"
-                                    : GitHubReady == true      ? "Session is not running"
-                                                               : "Enable GitHub access and log in to use this");
+            ImGui::SetTooltip("Commits, changes, commit and push for this session");
         }
         ImGui::PopID();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor(3);
-        if (ReviewClicked == true)
+        if (GitClicked == true)
         {
             Review_.Load(CurrentSession.Rec.Cwd);
             ModalTarget_ = CurrentSession.Rec.Id;
             OpenModal(Modal::Review);
-        }
-        if (CommitClicked == true)
-        {
-            SendPrompt(CurrentSession, COMMIT_PROMPT);
-        }
-        if (PushClicked == true)
-        {
-            SendPrompt(CurrentSession, PUSH_PROMPT);
         }
     }
 
@@ -357,18 +326,20 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
 
     ImGui::SetCursorPos(ImVec2(0, HeaderHeight + 1));
     DrawTerminal(CurrentSession, ImVec2(Size.x, ImGui::GetContentRegionAvail().y), IsActive);
+    float ShellTopY = HeaderPos.y + HeaderHeight;
     if (LiveViewIds_.count(CurrentSession.Rec.Id) > 0)
     {
-        DrawLiveView(CurrentSession, HeaderPos, Size, HeaderHeight);
+        ShellTopY = DrawLiveView(CurrentSession, HeaderPos, Size, HeaderHeight);
     }
-    DrawShellActivity(CurrentSession, HeaderPos, Size, HeaderHeight);
+    ShellTopY = DrawChildBars(CurrentSession, HeaderPos, Size, HeaderHeight, ShellTopY);
+    DrawShellActivity(CurrentSession, HeaderPos, Size, HeaderHeight, ShellTopY);
 
     ImGui::EndChild();
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor(2);
 }
 
-void App::DrawLiveView(Session& CurrentSession, const ImVec2 PaneTopLeft, const ImVec2 PaneSize, const float HeaderHeight)
+float App::DrawLiveView(Session& CurrentSession, const ImVec2 PaneTopLeft, const ImVec2 PaneSize, const float HeaderHeight)
 {
     constexpr float DEFAULT_ASPECT = 0.5625f;
     const float Scale = UiScale_;
@@ -414,9 +385,10 @@ void App::DrawLiveView(Session& CurrentSession, const ImVec2 PaneTopLeft, const 
     DrawList->AddCircleFilled(ImVec2(Min.x + 10 * Scale, LabelY + ImGui::GetTextLineHeight() * 0.5f), 3.5f * Scale, DotColor);
     DrawList->AddText(ImVec2(Min.x + 20 * Scale, LabelY), TextColorU32_, Label.c_str());
     DrawList->AddRect(Min, Max, Stale == true ? WaitingColor_ : AccentColor_, 6 * Scale);
+    return Max.y;
 }
 
-void App::DrawShellActivity(const Session& CurrentSession, const ImVec2 PaneTopLeft, const ImVec2 PaneSize, const float HeaderHeight)
+void App::DrawShellActivity(const Session& CurrentSession, const ImVec2 PaneTopLeft, const ImVec2 PaneSize, const float HeaderHeight, const float TopY)
 {
     using ActiveCommand = TranscriptScanner::ActiveCommand;
     const std::map<std::string, std::vector<ActiveCommand>>::const_iterator Found = RunningCommands_.find(CurrentSession.Rec.Id);
@@ -528,7 +500,7 @@ void App::DrawShellActivity(const Session& CurrentSession, const ImVec2 PaneTopL
         Height += LineHeight + 4 * Scale;
     }
 
-    const ImVec2 Min(PaneTopLeft.x + Margin, PaneTopLeft.y + HeaderHeight + Margin);
+    const ImVec2 Min(PaneTopLeft.x + PaneSize.x - Width - Margin, TopY + Margin);
     const ImVec2 Max(Min.x + Width, Min.y + Height);
     ImDrawList* const DrawList = ImGui::GetWindowDrawList();
     DrawList->AddRectFilled(ImVec2(Min.x + 2 * Scale, Min.y + 3 * Scale), ImVec2(Max.x + 2 * Scale, Max.y + 3 * Scale), IM_COL32(0, 0, 0, 120), 6 * Scale);

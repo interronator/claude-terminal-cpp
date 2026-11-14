@@ -4,6 +4,7 @@
 #include <cctype>
 
 #include "BuildScripts.h"
+#include "PeerNames.h"
 #include "SessionDefaults.h"
 #include "Platform.h"
 #include "Util.h"
@@ -113,10 +114,8 @@ bool Session::Spawn(const std::string& Command, int Cols, int Rows, bool Resume,
         Err = "Claude Code CLI ('" + Argv[0] + "') was not found. Install it with: npm install -g @anthropic-ai/claude-code (see docs.claude.com/en/docs/claude-code), then restart this session. First run asks you to sign in.";
         return false;
     }
-    if (Resume == false)
-    {
-        SessionDefaults::AppendFlags(Argv, LaunchModel, LaunchPermissionMode);
-    }
+    SessionDefaults::AppendFlags(Argv, Resume == true ? Rec.Model : LaunchModel, Resume == true ? std::string() : LaunchPermissionMode);
+    SessionDefaults::AppendName(Argv, PeerNames::For(Rec.Name, Rec.Id));
     Argv.push_back(Resume ? "--resume" : "--session-id");
     Argv.push_back(Rec.ClaudeSessionId);
 

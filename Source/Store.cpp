@@ -102,6 +102,7 @@ State Store::ParseState(const json& Root)
         Loaded.AppSettings.ClaudeCommand = SettingsJson.value("claudeCommand", "claude");
         Loaded.AppSettings.Notifications = SettingsJson.value("notifications", true);
         Loaded.AppSettings.AutoStartWindow = SettingsJson.value("autoStartWindow", false);
+        Loaded.AppSettings.AskSessionName = SettingsJson.value("askSessionName", false);
         Loaded.AppSettings.DefaultModel = SettingsJson.value("defaultModel", std::string());
         Loaded.AppSettings.DefaultPermissionMode = SettingsJson.value("defaultPermissionMode", std::string());
         Loaded.AppSettings.GitHubEnabled = SettingsJson.value("githubEnabled", false);
@@ -167,8 +168,11 @@ SessionRec Store::ReadSessionRec(const json& SessionJson)
     Rec.Name = SessionJson.value("name", "");
     Rec.Cwd = SessionJson.value("cwd", "");
     Rec.ClaudeSessionId = SessionJson.value("claudeSessionId", "");
+    Rec.Model = SessionJson.value("model", "");
+    Rec.ParentId = SessionJson.value("parentId", "");
     Rec.Started = SessionJson.value("started", false);
     Rec.WasRunning = SessionJson.value("wasRunning", false);
+    Rec.AutoTitle = SessionJson.value("autoTitle", false);
     Rec.CreatedAt = SessionJson.value("createdAt", 0LL);
     if (SessionJson.contains("worktree") == true && SessionJson["worktree"].is_object() == true)
     {
@@ -188,6 +192,18 @@ json Store::SessionRecToJson(const SessionRec& Rec)
                         {"started", Rec.Started},
                         {"wasRunning", Rec.WasRunning},
                         {"createdAt", Rec.CreatedAt}};
+    if (Rec.Model.empty() == false)
+    {
+        SessionJson["model"] = Rec.Model;
+    }
+    if (Rec.ParentId.empty() == false)
+    {
+        SessionJson["parentId"] = Rec.ParentId;
+    }
+    if (Rec.AutoTitle == true)
+    {
+        SessionJson["autoTitle"] = true;
+    }
     if (Rec.WorktreeInfo)
     {
         SessionJson["worktree"] = {
@@ -242,6 +258,7 @@ bool Store::Save() const
     Root["settings"] = {{"claudeCommand", AppState.AppSettings.ClaudeCommand},
                         {"notifications", AppState.AppSettings.Notifications},
                         {"autoStartWindow", AppState.AppSettings.AutoStartWindow},
+                        {"askSessionName", AppState.AppSettings.AskSessionName},
                         {"defaultModel", AppState.AppSettings.DefaultModel},
                         {"defaultPermissionMode", AppState.AppSettings.DefaultPermissionMode},
                         {"githubEnabled", AppState.AppSettings.GitHubEnabled},

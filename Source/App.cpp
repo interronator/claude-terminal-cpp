@@ -33,6 +33,7 @@ App::App(GLFWwindow* Window, Store& Store, float UiScale)
         Sessions_.push_back(std::make_unique<Session>(Rec));
     }
     UiState& Ui = State_.Ui;
+    Ui.OpenIds = GroupOrder(Ui.OpenIds);
     Ui.OpenIds.erase(std::remove_if(Ui.OpenIds.begin(), Ui.OpenIds.end(),
                                     [&](const std::string& Id) { return FindSession(Id) == nullptr; }),
                      Ui.OpenIds.end());
@@ -270,6 +271,14 @@ std::vector<std::string> App::FilteredOpenIds() const
         {
             continue;
         }
+        if (FamilyFocusIds_.empty() == false)
+        {
+            if (FamilyFocusIds_.count(Id) > 0)
+            {
+                Result.push_back(Id);
+            }
+            continue;
+        }
         const bool InExtras = std::find(FilterExtraIds_.begin(), FilterExtraIds_.end(), Id) != FilterExtraIds_.end();
         if (State_.Ui.TabFilterProjectId.empty() == false && SessionPtr->Rec.ProjectId != State_.Ui.TabFilterProjectId && InExtras == false)
         {
@@ -319,6 +328,99 @@ void App::FocusSession(const std::string& Id)
     CurrentSession->Unseen = false;
 }
 
+bool App::HasChildSessions(const std::string& ParentId) const
+{
+    return std::any_of(Sessions_.begin(), Sessions_.end(), [&ParentId](const std::unique_ptr<Session>& Candidate) { return Candidate->Rec.ParentId == ParentId && Candidate->Rec.Id != ParentId; });
+}
+
+// Depth-first: every session is followed by its children, so a parent and its descendants sit side by side, left to right.
+std::vector<std::string> App::GroupOrder(const std::vector<std::string>& Ids) const
+{
+    const std::set<std::string> Present(Ids.begin(), Ids.end());
+    std::vector<std::string> Ordered;
+    std::set<std::string> Placed;
+    const std::function<void(const std::string&)> Place = [&](const std::string& Id)
+    {
+        if (Placed.insert(Id).second == false)
+        {
+            return;
+        }
+        Ordered.push_back(Id);
+        for (const std::string& Other : Ids)
+        {
+            const Session* const OtherSession = FindSession(Other);
+            if (OtherSession != nullptr && OtherSession->Rec.ParentId == Id && Other != Id)
+            {
+                Place(Other);
+            }
+        }
+    };
+    for (const std::string& Id : Ids)
+    {
+        const Session* const SessionPtr = FindSession(Id);
+        const bool ParentOpen = SessionPtr != nullptr && SessionPtr->Rec.ParentId.empty() == false && SessionPtr->Rec.ParentId != Id && Present.count(SessionPtr->Rec.ParentId) > 0;
+        if (ParentOpen == false)
+        {
+            Place(Id);
+        }
+    }
+    for (const std::string& Id : Ids)
+    {
+        Place(Id);
+    }
+    return Ordered;
+}
+
+std::string App::FamilyRootId(const Session& Target, const std::vector<const Session*>& Among) const
+{
+    const Session* Current = &Target;
+    for (size_t Guard = 0; Guard < Among.size(); Guard++)
+    {
+        const std::string& ParentId = Current->Rec.ParentId;
+        const std::vector<const Session*>::const_iterator Parent =
+            std::find_if(Among.begin(), Among.end(), [&ParentId](const Session* const Candidate) { return Candidate->Rec.Id == ParentId; });
+        if (ParentId.empty() == true || Parent == Among.end())
+        {
+            break;
+        }
+        Current = *Parent;
+    }
+    return Current->Rec.Id;
+}
+
+void App::FocusFamily(const std::string& ParentId)
+{
+    std::set<std::string> Family;
+    Family.insert(ParentId);
+    bool Grew = true;
+    while (Grew == true)
+    {
+        Grew = false;
+        for (const std::unique_ptr<Session>& Candidate : Sessions_)
+        {
+            if (Candidate->Rec.ParentId.empty() == false && Family.count(Candidate->Rec.ParentId) > 0 && Family.insert(Candidate->Rec.Id).second == true)
+            {
+                Grew = true;
+            }
+        }
+    }
+    for (const std::unique_ptr<Session>& Candidate : Sessions_)
+    {
+        if (Family.count(Candidate->Rec.Id) > 0 && std::find(State_.Ui.OpenIds.begin(), State_.Ui.OpenIds.end(), Candidate->Rec.Id) == State_.Ui.OpenIds.end())
+        {
+            State_.Ui.OpenIds.push_back(Candidate->Rec.Id);
+        }
+    }
+    State_.Ui.OpenIds = GroupOrder(State_.Ui.OpenIds);
+    FilterExtraIds_.clear();
+    FamilyFocusIds_ = Family;
+    State_.Ui.ActionFilter = "all";
+    State_.Ui.Mode = "tile";
+    MaximizedId_.clear();
+    FocusSession(ParentId);
+    MarkDirty();
+}
+
 void App::OpenSession(const std::string& Id)
 {
     Session* const CurrentSession = FindSession(Id);
@@ -330,10 +432,15 @@ void App::OpenSession(const std::string& Id)
     if (std::find(Open.begin(), Open.end(), Id) == Open.end())
     {
         Open.push_back(Id);
+        Open = GroupOrder(Open);
     }
     if (MaximizedId_.empty() == false && MaximizedId_ != Id)
     {
         MaximizedId_.clear();
+    }
+    if (FamilyFocusIds_.empty() == false)
+    {
+        FamilyFocusIds_.insert(Id);
     }
     const bool OutsideFilter = State_.Ui.TabFilterProjectId.empty() == false && State_.Ui.TabFilterProjectId != CurrentSession->Rec.ProjectId;
     if (OutsideFilter == true && std::find(FilterExtraIds_.begin(), FilterExtraIds_.end(), Id) == FilterExtraIds_.end())
@@ -349,6 +456,7 @@ void App::HideSession(const std::string Id)
     std::vector<std::string>& Open = State_.Ui.OpenIds;
     Open.erase(std::remove(Open.begin(), Open.end(), Id), Open.end());
     FilterExtraIds_.erase(std::remove(FilterExtraIds_.begin(), FilterExtraIds_.end(), Id), FilterExtraIds_.end());
+    FamilyFocusIds_.erase(Id);
     if (State_.Ui.ActiveId == Id)
     {
         State_.Ui.ActiveId = Open.empty() ? "" : Open.back();
@@ -766,8 +874,15 @@ void App::TickSessions(double Now)
 {
     Now_ = Now;
     Session::StatusFn const Callback = StatusCallback();
+    std::vector<std::string> FinishedIds;
     for (const std::unique_ptr<Session>& CurrentSession : Sessions_)
     {
+        if (CurrentSession->ClosePending == true && CurrentSession->CurrentStatus == Status::Idle && CurrentSession->PendingPrompt.empty() == true &&
+            CurrentSession->InBackground() == false)
+        {
+            FinishedIds.push_back(CurrentSession->Rec.Id);
+            continue;
+        }
         if (CurrentSession->Attempted == false && CurrentSession->Rec.WasRunning == true && IsSessionOpen(CurrentSession->Rec.Id) == false)
         {
             CurrentSession->Attempted = true;
@@ -785,8 +900,20 @@ void App::TickSessions(double Now)
             CurrentSession->PendingPrompt.clear();
             SendPrompt(*CurrentSession, Prompt);
         }
+        ConfirmSubmitted(*CurrentSession);
         AutoContinueTick(*CurrentSession);
         PollScreenshots(*CurrentSession);
+        WatchBackgroundTasks(*CurrentSession);
+        AutoTitleTick(*CurrentSession);
+    }
+    ApplyAutoTitles();
+    for (const std::string& FinishedId : FinishedIds)
+    {
+        const Session* const Finished = FindSession(FinishedId);
+        const std::string Name = Finished != nullptr ? Finished->Rec.Name : std::string();
+        CloseSession(FinishedId, 0);
+        ShowToast("Closed " + Name + " (it finished). It is in the Archive.");
+        MarkDirty();
     }
 }
 
@@ -813,6 +940,8 @@ void App::Frame(double Now)
     Focused_ = Focused;
 
     PollSessionRequests();
+    PollChildProgress();
+    AutoContinueHandoffs();
     TickSessions(Now);
     EnsureActiveVisible();
 
@@ -860,7 +989,7 @@ void App::Frame(double Now)
     }
 }
 
-void App::DrawStatusDot(ImDrawList* DrawList, ImVec2 Center, float Radius, const Session& CurrentSession) const
+void App::DrawStatusDot(ImDrawList* DrawList, ImVec2 Center, float Radius, const Session& CurrentSession, const bool GreyWhenIdle) const
 {
     switch (CurrentSession.CurrentStatus)
     {
@@ -887,6 +1016,10 @@ void App::DrawStatusDot(ImDrawList* DrawList, ImVec2 Center, float Radius, const
             {
                 DrawList->AddCircleFilled(Center, Radius + 3, UiHelpers::WithAlpha(DoneColor_, 60));
                 DrawList->AddCircleFilled(Center, Radius, DoneColor_);
+            }
+            else if (GreyWhenIdle == true)
+            {
+                DrawList->AddCircleFilled(Center, Radius, IdleColor_);
             }
             else
             {
