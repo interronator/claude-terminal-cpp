@@ -33,7 +33,13 @@ public:
     double SubmitInputMark = 0;  // LastInputAt() right after the app's own sends; later input means the user typed
     std::string SubmittedText;   // the prompt the app sent, used to tell it from text the user typed
     double LastInputAt() const { return LastInput_; }
+    double UserTypedAt = -1000;  // when the user last typed or pasted into this session (not the app's own sends)
+    bool UserIsTyping(const double Now) const { return Now - UserTypedAt < USER_TYPING_SECONDS; }
+    static constexpr double USER_TYPING_SECONDS = 8.0;
     bool ClosePending = false;  // a child session said it is finished; closed once it settles to idle
+    std::string StartedFile;    // request file this session was started from, until its Started note is written and a task arrives
+    double ReadyAt = 0;         // when the Started note was written; 0 = not yet
+    bool NoTaskWarned = false;
     std::string ExtraGuidance;  // appended to the system prompt on launch
     std::string LaunchModel;           // used only when a brand-new conversation starts
     std::string LaunchPermissionMode;  // used only when a brand-new conversation starts
@@ -61,6 +67,7 @@ public:
     bool RequiresAction() const { return CurrentStatus == Status::Waiting || (CurrentStatus == Status::Idle && Unseen && InBackground() == false); }
     // Claude's turn ended but background shells or monitors are still running, and it will pick up again when they report.
     bool InBackground() const { return CurrentStatus == Status::Idle && BackgroundTasks > 0; }
+    unsigned long long MemoryBytes() const { return Pty_ != nullptr ? Pty_->MemoryBytes() : 0; }
     bool Start(const std::string& Command, int Cols, int Rows, double Now, std::string& Err);
     void Kill(double Now, const StatusFn& Callback);
     void Tick(double Now, const StatusFn& Callback);                       // drain output, run timers

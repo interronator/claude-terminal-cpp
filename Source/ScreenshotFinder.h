@@ -112,7 +112,9 @@ public:
         return "Screenshots: this session's tag is " + Tag + ". Save every screenshot or image you capture or render to " + Directory +
                " (create the folder if needed) and start each file name with the tag, e.g. " + Tag + "_main-menu.png. If a tool saves an image "
                "somewhere else, copy it into that folder with the tagged name. When you mention a screenshot, give its full path. Never put "
-               "another session's tag in your file names.";
+               "another session's tag in your file names. If you start child sessions to make visual edits or additions, the screenshots panel "
+               "only shows your own session's folder, so once the child sessions are done, capture the final screenshots of what was changed or "
+               "added yourself and save them to your folder with your tag, so they show in the screenshots panel.";
     }
 
     // Finds paths in the text that end at a directory named ClaudeShots (including ones that only prefix a file path).

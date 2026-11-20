@@ -81,6 +81,18 @@ void App::DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const fl
 {
     const double Wall = PeerLinks::WallNow();
     std::vector<PeerLinks::View> Links = PeerLinks_.Visible(Wall);
+    const bool HasMentionHover = MentionHoverFromId_.empty() == false && MentionHoverToId_.empty() == false;
+    if (HasMentionHover == true)
+    {
+        PeerLinks::View Hover;
+        Hover.FromId = MentionHoverFromId_;
+        Hover.ToId = MentionHoverToId_;
+        Hover.Strength = 1.0f;
+        Links.push_back(Hover);
+    }
+    const std::string HoverToId = MentionHoverToId_;
+    MentionHoverFromId_.clear();
+    MentionHoverToId_.clear();
     if (Links.empty() == true)
     {
         return;
@@ -110,6 +122,7 @@ void App::DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const fl
         {
             continue;
         }
+        bool ToSidebar = false;
         if (Link.Waiting == true)
         {
             const ImU32 Tint = UiHelpers::SessionTint(Link.FromId);
@@ -140,10 +153,17 @@ void App::DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const fl
         {
             // A peer without a pane leads to its toolbar chip, or, when it has none either, off the top of the pane area.
             const PeerVeins::Box& Shown = FromPane != nullptr ? *FromPane : *ToPane;
-            const PeerVeins::Box* const Chip = PeerVeins_.FindChip(FromPane != nullptr ? Link.ToId : Link.FromId);
+            const std::string& HiddenId = FromPane != nullptr ? Link.ToId : Link.FromId;
+            const PeerVeins::Box* const Row = PeerVeins_.FindRow(HiddenId);
+            const PeerVeins::Box* const Chip = PeerVeins_.FindChip(HiddenId);
             const ImVec2 Start = PeerVeins::TopMiddle(Shown);
             ImVec2 End(Start.x, PanesMin.y - 70 * Scale);
-            if (Chip != nullptr)
+            if (Row != nullptr)
+            {
+                End = ImVec2(Row->Max.x, (Row->Min.y + Row->Max.y) * 0.5f);
+                ToSidebar = true;
+            }
+            else if (Chip != nullptr)
             {
                 End = ImVec2((Chip->Min.x + Chip->Max.x) * 0.5f, Chip->Max.y + 2 * Scale);
             }
@@ -151,7 +171,7 @@ void App::DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const fl
             {
                 OffScreen = true;
             }
-            Route = PeerVeins::Curve(Start, End, true, std::numeric_limits<float>::lowest(), Scale);
+            Route = ToSidebar == true ? PeerVeins::SideCurve(Start, End, Scale) : PeerVeins::Curve(Start, End, true, std::numeric_limits<float>::lowest(), Scale);
             if (FromPane == nullptr)
             {
                 std::reverse(Route.begin(), Route.end());
@@ -167,13 +187,27 @@ void App::DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const fl
         {
             DrawList->PushClipRect(ImVec2(PanesMin.x, TopY - Gap), PanesMax, true);
         }
+        if (ToSidebar == true)
+        {
+            DrawList->PushClipRectFullScreen();
+        }
         PeerVeins_.Draw(DrawList, Route, Current, Now_, Scale);
+        if (ToSidebar == true)
+        {
+            DrawList->PopClipRect();
+        }
         if (OffScreen == true)
         {
             DrawList->PopClipRect();
         }
     }
 
+    const PeerVeins::Box* const HoverPane = HasMentionHover == true ? PeerVeins_.FindPane(HoverToId) : nullptr;
+    if (HoverPane != nullptr)
+    {
+        const float Pulse = 0.5f + 0.5f * static_cast<float>(std::sin(Now_ * 5.0));
+        DrawList->AddRect(HoverPane->Min, HoverPane->Max, UiHelpers::WithAlpha(UiHelpers::SessionTint(HoverToId), static_cast<int>(110 + 130 * Pulse)), 6 * Scale, 0, 2.5f * Scale);
+    }
     for (const std::pair<const std::string, std::vector<std::pair<std::string, ImU32>>>& Pane : Pills)
     {
         DrawWaitingPills(DrawList, *PeerVeins_.FindPane(Pane.first), Pane.second);

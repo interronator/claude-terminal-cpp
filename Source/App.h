@@ -20,6 +20,12 @@
 #include <vector>
 
 #include "BackgroundWatch.h"
+#include "BlenderLive.h"
+#include "BlenderMarkup.h"
+#include "BlenderReviewBatch.h"
+#include "BlenderReviewHistory.h"
+#include "BlenderViewControl.h"
+#include "MeshGenerator.h"
 #include "ChildProgress.h"
 #include "CommandTiming.h"
 #include "FileIndex.h"
@@ -31,18 +37,24 @@
 #include "LiveView.h"
 #include "ModelCatalog.h"
 #include "NightlyBuild.h"
+#include "PaneGrid.h"
 #include "PeerLinks.h"
 #include "ProjectLocks.h"
 #include "PeerVeins.h"
 #include "ProjectLog.h"
 #include "ProjectLogWindow.h"
 #include "ProjectSettingsWindow.h"
+#include "RamLimit.h"
 #include "ScreenshotFeed.h"
 #include "Session.h"
 #include "PeerNames.h"
 #include "SessionRequests.h"
 #include "Store.h"
 #include "SessionTitler.h"
+#include "ScannerWorker.h"
+#include "ShellHistory.h"
+#include "ShellOutputTail.h"
+#include "ShellRow.h"
 #include "TranscriptScanner.h"
 #include "UsageClient.h"
 
@@ -109,6 +121,8 @@ private:
     void PollScreenshots(Session& CurrentSession);
     // ---- session-to-session messages, shown as veins along the pane borders ----
     void NotePeerMessages(const Session& CurrentSession, TranscriptScanner& Scanner);
+    void ApplyScanResults();
+    void ApplyScanResult(Session& CurrentSession, TranscriptScanner& Scanner, const std::vector<TranscriptScanner::Shot>& Shots);
     std::string PeerDisplayName(const std::string& Id) const;
     bool IsPeerBusy(const std::string& Id) const;
     struct ReplyTrack
@@ -121,9 +135,10 @@ private:
     std::map<std::string, ReplyTrack> ReplyTracks_;
     bool ReplyHandled(const PeerLinks::View& Link);
     void DrawPeerOverlay(const ImVec2 PanesMin, const ImVec2 PanesMax, const float Gap);
+    std::string FindSessionMention(const Session& Self, const Terminal& Term, int AbsRow, int Col) const;
+    void ApplyMentionFocus();
     void DrawWaitingPills(ImDrawList* const DrawList, const PeerVeins::Box& Pane, const std::vector<std::pair<std::string, ImU32>>& Labels);
     void RequestDeleteAllArchived();
-    void BuildAndRun(Session& CurrentSession);
     // ---- auto mode: the user is away, so sessions keep going instead of stopping to ask ----
     static constexpr const char* AUTO_DONE_MARKER = "AUTO-DONE";
     static constexpr const char* AUTO_ON_PROMPT =
@@ -148,40 +163,100 @@ private:
     // Typing into an approval menu would pick one of its options, so a waiting session gets the message once it's idle.
     void SendWhenSafe(Session& Target, const std::string& Text)
     {
-        if (Target.CurrentStatus == Status::Waiting)
+        if (Target.CurrentStatus == Status::Waiting || Target.UserIsTyping(Now_) == true)
         {
             Target.PendingPrompt = Text;
             return;
         }
         SendPrompt(Target, Text);
     }
+    bool AutoActiveFor(const Session& Target) const
+    {
+        return AutoMode_ == true || AutoProjects_.count(Target.Rec.ProjectId) > 0 || AutoSessions_.count(Target.Rec.Id) > 0;
+    }
+    bool SessionIsAuto(const std::string& SessionId) const
+    {
+        return AutoSessions_.count(SessionId) > 0;
+    }
+    void SetSessionAutoMode(Session& Target, const bool Enabled)
+    {
+        if (Enabled == true)
+        {
+            AutoSessions_.insert(Target.Rec.Id);
+        }
+        else
+        {
+            AutoSessions_.erase(Target.Rec.Id);
+        }
+        const bool CoveredElsewhere = AutoMode_ == true || AutoProjects_.count(Target.Rec.ProjectId) > 0;
+        if (CoveredElsewhere == false)
+        {
+            ApplyAutoChange(Target, Enabled);
+        }
+        ShowToast(Enabled == true ? "Auto on for this session" : "Auto off for this session");
+    }
+    bool ProjectIsAuto(const std::string& ProjectId) const
+    {
+        return AutoProjects_.count(ProjectId) > 0;
+    }
+    // Returns true when the session was told about the change.
+    bool ApplyAutoChange(Session& Candidate, const bool Enabled)
+    {
+        AutoState& State = AutoStates_[Candidate.Rec.Id];
+        const bool WasInformed = State.Informed;
+        State = AutoState{};
+        if (Candidate.IsRunning() == false || Candidate.CurrentStatus == Status::Starting)
+        {
+            return false;
+        }
+        if (Enabled == true)
+        {
+            SendWhenSafe(Candidate, AUTO_ON_PROMPT);
+            State.Informed = true;
+            return true;
+        }
+        if (WasInformed == true)
+        {
+            SendWhenSafe(Candidate, AUTO_OFF_PROMPT);
+            return true;
+        }
+        return false;
+    }
     void SetAutoMode(const bool Enabled)
     {
         AutoMode_ = Enabled;
+        AutoSessions_.clear();
         int Told = 0;
         for (const std::unique_ptr<Session>& Candidate : Sessions_)
         {
-            AutoState& State = AutoStates_[Candidate->Rec.Id];
-            const bool WasInformed = State.Informed;
-            State = AutoState{};
-            if (Candidate->IsRunning() == false || Candidate->CurrentStatus == Status::Starting)
+            if (Enabled == false && AutoProjects_.count(Candidate->Rec.ProjectId) > 0)
             {
                 continue;
             }
-            if (Enabled == true)
-            {
-                SendWhenSafe(*Candidate, AUTO_ON_PROMPT);
-                State.Informed = true;
-                Told++;
-                continue;
-            }
-            if (WasInformed == true)
-            {
-                SendWhenSafe(*Candidate, AUTO_OFF_PROMPT);
-                Told++;
-            }
+            Told += ApplyAutoChange(*Candidate, Enabled) == true ? 1 : 0;
         }
         ShowToast(std::string(Enabled == true ? "Auto mode on: told " : "Auto mode off: told ") + std::to_string(Told) + " session" + (Told == 1 ? "" : "s"));
+    }
+    void SetProjectAutoMode(const std::string& ProjectId, const bool Enabled)
+    {
+        if (Enabled == true)
+        {
+            AutoProjects_.insert(ProjectId);
+        }
+        else
+        {
+            AutoProjects_.erase(ProjectId);
+        }
+        int Told = 0;
+        for (const std::unique_ptr<Session>& Candidate : Sessions_)
+        {
+            if (Candidate->Rec.ProjectId != ProjectId || (Enabled == false && AutoMode_ == true))
+            {
+                continue;
+            }
+            Told += ApplyAutoChange(*Candidate, Enabled) == true ? 1 : 0;
+        }
+        ShowToast(std::string(Enabled == true ? "Project auto mode on: told " : "Project auto mode off: told ") + std::to_string(Told) + " session" + (Told == 1 ? "" : "s"));
     }
     // Called every tick: a session that finished a turn gets a short "keep going" nudge after a few seconds, unless it said
     // it is done, is waiting on background tasks, or has already been nudged several times without doing real work.
@@ -189,8 +264,8 @@ private:
     {
         constexpr double NUDGE_DELAY_SECONDS = 6.0;
         constexpr int MAX_NUDGES_IN_A_ROW = 4;
-        if (AutoMode_ == false || Target.IsRunning() == false || Target.CurrentStatus != Status::Idle || Target.InBackground() == true ||
-            Target.PendingPrompt.empty() == false)
+        if (AutoActiveFor(Target) == false || Target.IsRunning() == false || Target.CurrentStatus != Status::Idle || Target.InBackground() == true ||
+            Target.PendingPrompt.empty() == false || Target.UserIsTyping(Now_) == true)
         {
             return;
         }
@@ -203,8 +278,8 @@ private:
         {
             return;
         }
-        const std::map<std::string, TranscriptScanner>::const_iterator Scanner = TranscriptScanners_.find(Target.Rec.Id);
-        const std::string LastReply = Scanner != TranscriptScanners_.end() ? Scanner->second.LastAssistantText() : std::string();
+        const std::map<std::string, std::shared_ptr<TranscriptScanner>>::const_iterator Scanner = TranscriptScanners_.find(Target.Rec.Id);
+        const std::string LastReply = Scanner != TranscriptScanners_.end() ? Scanner->second->LastAssistantText() : std::string();
         if (LastReply.empty() == true)
         {
             return;  // nothing has happened in this session yet
@@ -254,35 +329,28 @@ private:
         std::time_t RequestedAt = 0;
         double CheckAt = 0;
         bool Ready = false;
-        bool AutoContinue = true;  // start the fresh session as soon as the summary is ready
+        std::string FreshId;  // the session already started to continue the work
+        std::string FreshName;
     };
-    static std::string HandoffPrompt(const std::string& Path)
+    static std::string HandoffPrompt(const std::string& Path, const std::string& PeerName, const std::string& Tag)
     {
         return "Write a handoff summary so this work can be continued by a fresh Claude session that has none of this conversation's context. "
                "Save it as Markdown to " + Path + " (create the folder if needed). Include: the goal and what the user asked for; what has been "
                "done so far (files changed and why); the current state (what works, what is untested or broken, anything still running such as "
                "background tasks, editors or games); decisions made and the user's preferences and constraints from this conversation; open "
                "questions; and the exact next steps, in order. Be specific: name files, functions, commands and paths. Do not continue the work "
-               "itself; only write the file, then reply with its path.";
-    }
-    // Feeds the summary itself to the new session, so it starts with the full context instead of having to go read it.
-    static std::string ContinuePrompt(const std::string& Path)
-    {
-        std::ifstream Stream(Path, std::ios::binary);
-        std::stringstream Buffer;
-        Buffer << Stream.rdbuf();
-        std::string Summary = Buffer.str();
-        Summary.erase(std::remove(Summary.begin(), Summary.end(), '\r'), Summary.end());
-        if (Summary.find_first_not_of(" \t\r\n") == std::string::npos)
-        {
-            return "You are continuing work another session handed off. Read the handoff summary at " + Path +
-                   " first, check the current state of the files it names, then carry on with its next steps. Ask me if anything in it is unclear.";
-        }
-        return "You are continuing work another session handed off. Here is its handoff summary (also saved at " + Path + "):\n\n" + Summary +
-               "\n\nCheck the current state of the files it names, then carry on with its next steps. Ask me if anything in it is unclear.";
+               "itself. A fresh session named '" + PeerName + "' (tag " + Tag + ") has already been started to take over. Once the file is written, "
+               "send the full summary to it with SendMessage (find the ListAgents row whose name ends with the tag; if it is not listed yet, retry every "
+               "few seconds), worded as: \"You are continuing work another session handed off. Here is its handoff summary (also saved at " + Path +
+               "): <summary>. Check the current state of the files it names, then carry on with its next steps. Ask the user if anything is unclear.\" "
+               "Then reply with one short line saying it was sent.";
     }
     void RequestHandoff(Session& CurrentSession)
     {
+        if (Handoffs_.count(CurrentSession.Rec.Id) > 0)
+        {
+            return;
+        }
         const std::time_t Now = std::time(nullptr);
         std::tm Local{};
 #ifdef _WIN32
@@ -298,45 +366,101 @@ private:
             SafeName += std::isalnum(static_cast<unsigned char>(Character)) != 0 ? Character : '-';
         }
         const std::filesystem::path Path = std::filesystem::path(SessionProjectDir(CurrentSession)) / "ClaudeHandoffs" / (std::string(Stamp) + "_" + SafeName + ".md");
-        Handoffs_[CurrentSession.Rec.Id] = {Path.string(), Now, 0, false};
-        SendPrompt(CurrentSession, HandoffPrompt(Path.string()));
-        ShowToast("Asked " + CurrentSession.Rec.Name + " for a handoff summary. A fresh session starts from it once it's written.");
+        Handoffs_[CurrentSession.Rec.Id] = {Path.string(), Now, 0, false, std::string(), std::string()};
     }
     // Runs once per frame, outside any pane drawing, because starting a session changes the session list.
-    void AutoContinueHandoffs()
+    void ProcessHandoffs()
     {
-        std::vector<std::string> ReadyIds;
+        std::vector<std::string> SourceIds;
         for (const std::pair<const std::string, Handoff>& Entry : Handoffs_)
         {
-            if (Entry.second.AutoContinue == false)
+            SourceIds.push_back(Entry.first);
+        }
+        for (const std::string& SourceId : SourceIds)
+        {
+            const Session* const Source = FindSession(SourceId);
+            const std::map<std::string, Handoff>::iterator Found = Handoffs_.find(SourceId);
+            if (Found == Handoffs_.end())
             {
                 continue;
             }
-            const Session* const Source = FindSession(Entry.first);
             if (Source == nullptr)
             {
+                Handoffs_.erase(Found);
+                continue;
+            }
+            if (Found->second.FreshId.empty() == true)
+            {
+                StartHandoffSession(*Source);
                 continue;
             }
             const Handoff* const Polled = PollHandoff(*Source);
-            if (Polled != nullptr && Polled->Ready == true)
-            {
-                ReadyIds.push_back(Entry.first);
-            }
-        }
-        for (const std::string& ReadyId : ReadyIds)
-        {
-            const Session* const Source = FindSession(ReadyId);
-            if (Source == nullptr)
+            if (Polled == nullptr || Polled->Ready == false)
             {
                 continue;
             }
-            ContinueFromHandoff(*Source);
-            const std::map<std::string, Handoff>::iterator Left = Handoffs_.find(ReadyId);
-            if (Left != Handoffs_.end())
-            {
-                Left->second.AutoContinue = false;
-            }
+            ShowToast("Handed off to " + Polled->FreshName + ". You can close " + Source->Rec.Name + " when you're happy.");
+            Handoffs_.erase(SourceId);
         }
+    }
+    void StartHandoffSession(const Session& Source)
+    {
+        const std::map<std::string, Handoff>::iterator Found = Handoffs_.find(Source.Rec.Id);
+        if (Found == Handoffs_.end())
+        {
+            return;
+        }
+        const std::string SourceId = Source.Rec.Id;
+        const std::string SourceName = Source.Rec.Name;
+        const std::string SourceCwd = Source.Rec.Cwd;
+        const std::string ProjectId = Source.Rec.ProjectId;
+        std::string Name = SourceName;
+        const std::string Suffix = " (cont.)";
+        if (Name.size() < Suffix.size() || Name.compare(Name.size() - Suffix.size(), Suffix.size(), Suffix) != 0)
+        {
+            Name += Suffix;
+        }
+        std::string Err;
+        Session* const Fresh = CreateSession(ProjectId, Name, false, false, Err);
+        if (Fresh == nullptr)
+        {
+            ShowToast("Could not start a fresh session: " + Err, true);
+            Handoffs_.erase(SourceId);
+            return;
+        }
+        // Work in the same folder; a worktree stays owned by the original session, so closing this one never removes it.
+        Fresh->Rec.Cwd = SourceCwd;
+        const std::string FreshId = Fresh->Rec.Id;
+        const std::string PeerName = PeerNames::For(Fresh->Rec.Name, FreshId);
+        const std::string Tag = ScreenshotFinder::SessionTag(FreshId);
+        OpenSession(FreshId);
+        Session* const Writer = FindSession(SourceId);
+        const std::map<std::string, Handoff>::iterator Again = Handoffs_.find(SourceId);
+        if (Writer == nullptr || Again == Handoffs_.end())
+        {
+            return;
+        }
+        Again->second.FreshId = FreshId;
+        Again->second.FreshName = Name;
+        Again->second.RequestedAt = std::time(nullptr);
+        SendPrompt(*Writer, HandoffPrompt(Again->second.Path, PeerName, Tag));
+        ShowToast("Started " + Name + ". " + SourceName + " is writing it a handoff summary.");
+    }
+    // Fallback if the message between sessions fails: a short prompt telling the fresh session to read the file itself.
+    void TellFreshToReadHandoff(const Session& Source)
+    {
+        const std::map<std::string, Handoff>::const_iterator Found = Handoffs_.find(Source.Rec.Id);
+        if (Found == Handoffs_.end() || Found->second.FreshId.empty() == true)
+        {
+            return;
+        }
+        Session* const Fresh = FindSession(Found->second.FreshId);
+        if (Fresh == nullptr)
+        {
+            return;
+        }
+        SendWhenSafe(*Fresh, "You are continuing work another session handed off. Read the handoff summary at " + Found->second.Path +
+                                 ", check the current state of the files it names, then carry on with its next steps. Ask me if anything is unclear.");
     }
     // Ready once the file exists, was written after the request, and the session has stopped working on it.
     const Handoff* PollHandoff(const Session& CurrentSession)
@@ -355,7 +479,7 @@ private:
             std::error_code ErrorCode;
             const bool Exists = std::filesystem::exists(Current.Path, ErrorCode);
             const std::time_t Written = Exists == true ? FileTimeToTimeT(std::filesystem::last_write_time(Current.Path, ErrorCode)) : 0;
-            Current.Ready = Exists == true && Written + CLOCK_SLACK_SECONDS >= Current.RequestedAt && CurrentSession.CurrentStatus != Status::Busy;
+            Current.Ready = Current.FreshId.empty() == false && Exists == true && Written + CLOCK_SLACK_SECONDS >= Current.RequestedAt && CurrentSession.CurrentStatus != Status::Busy;
         }
         return &Current;
     }
@@ -365,38 +489,16 @@ private:
             std::chrono::time_point_cast<std::chrono::system_clock::duration>(FileTime - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
         return std::chrono::system_clock::to_time_t(System);
     }
-    void ContinueFromHandoff(const Session& Source)
-    {
-        const std::map<std::string, Handoff>::iterator Found = Handoffs_.find(Source.Rec.Id);
-        if (Found == Handoffs_.end())
-        {
-            return;
-        }
-        const std::string Path = Found->second.Path;
-        std::string Name = Source.Rec.Name;
-        const std::string Suffix = " (cont.)";
-        if (Name.size() < Suffix.size() || Name.compare(Name.size() - Suffix.size(), Suffix.size(), Suffix) != 0)
-        {
-            Name += Suffix;
-        }
-        std::string Err;
-        Session* const Fresh = CreateSession(Source.Rec.ProjectId, Name, false, false, Err);
-        if (Fresh == nullptr)
-        {
-            ShowToast("Could not start a fresh session: " + Err, true);
-            return;
-        }
-        // Work in the same folder; a worktree stays owned by the original session, so closing this one never removes it.
-        Fresh->Rec.Cwd = Source.Rec.Cwd;
-        Fresh->PendingPrompt = ContinuePrompt(Path);
-        Handoffs_.erase(Found);
-        OpenSession(Fresh->Rec.Id);
-        ShowToast("Started " + Name + " from the handoff. You can close " + Source.Rec.Name + " when you're happy.");
-    }
 
     // Launches Claude with the project-log and screenshot-tagging instructions for the session's project.
     bool StartSession(Session& Target, const int Cols, const int Rows, std::string& Err)
     {
+        RamLimit_.Refresh(State_.AppSettings, Sessions_, Now_);
+        if (RamLimit_.IsOver() == true)
+        {
+            Err = RamLimit_.BlockedMessage();
+            return false;
+        }
         const Project* const Owner = FindProject(Target.Rec.ProjectId);
         Target.ExtraGuidance = Owner != nullptr ? ProjectLog::Guidance(Owner->Path, Target.Rec.Name) : std::string();
         const std::string Tag = ScreenshotFinder::SessionTag(Target.Rec.Id);
@@ -408,6 +510,11 @@ private:
             {
                 LiveView::EnsureScript(ProjectDir);
                 Target.ExtraGuidance += " " + LiveView::Guidance(ProjectDir, ScreenshotFinder::SessionShotDirectory(ProjectDir, Tag).string(), Tag);
+            }
+            if (IsBlenderSession(Target) == true)
+            {
+                BlenderLive::EnsureScript(ProjectDir);
+                Target.ExtraGuidance += " " + BlenderLive::Guidance(ProjectDir, ScreenshotFinder::SessionShotDirectory(ProjectDir, Tag).string(), Tag);
             }
         }
         SessionRequests::EnsureInbox();
@@ -422,6 +529,13 @@ private:
         Target.LaunchModel = Target.Rec.Model.empty() == false ? Target.Rec.Model : State_.AppSettings.DefaultModel;
         Target.LaunchPermissionMode = State_.AppSettings.DefaultPermissionMode;
         Target.ExtraGuidance += (Target.ExtraGuidance.empty() == true ? "" : " ") + SessionRequests::Guidance(Tag, PeerNames::For(Target.Rec.Name, Target.Rec.Id));
+        AutoState& Auto = AutoStates_[Target.Rec.Id];
+        Auto = AutoState{};
+        if (AutoActiveFor(Target) == true)
+        {
+            Target.ExtraGuidance += std::string(" ") + AUTO_ON_PROMPT;
+            Auto.Informed = true;
+        }
         return Target.Start(State_.AppSettings.ClaudeCommand, Cols, Rows, Now_, Err);
     }
     bool IsUnrealSession(const Session& Target)
@@ -435,6 +549,59 @@ private:
         UnrealProjects_[Target.Rec.ProjectId] = IsUnreal;
         return IsUnreal;
     }
+    bool IsBlenderSession(const Session& Target)
+    {
+        const std::map<std::string, bool>::const_iterator Known = BlenderProjects_.find(Target.Rec.ProjectId);
+        if (Known != BlenderProjects_.end())
+        {
+            return Known->second;
+        }
+        const bool IsBlender = BlenderLive::IsBlenderProject(SessionProjectDir(Target));
+        BlenderProjects_[Target.Rec.ProjectId] = IsBlender;
+        return IsBlender;
+    }
+    bool DoesMeshWork(const Session& Target);
+    Session* ReviewTargetFor(const Session& Root);
+    bool HasFreshBlenderFrame(const Session& Target);
+    void ToggleBlenderReview(const std::string& SessionId);
+    void OpenBlenderReview(const std::string& RequestedId);
+    void DrawBlenderReview();
+    void TouchBlenderLive(Session& Target);
+    void CloseBlenderReview();
+    std::string BlenderReviewerName(const Session& Mesh) const;
+    bool IsBlenderReviewer(const Session& Candidate) const;
+    Session* FindBlenderReviewer(const Session& Mesh) const;
+    bool InBlenderReview(const std::string& SessionId) const;
+    std::string BlenderReviewerBrief(const Session& Mesh, const Session& Reviewer);
+    Session* EnsureBlenderReviewer(Session& Mesh);
+    void SendToBlenderReviewer(Session& Reviewer, const std::string& Text);
+    void DrawBlenderRightHeader(Session& Mesh, Session* const Reviewer);
+    void DrawBlenderReviewLeft(Session& Target, const float Width, const float Height);
+    void DrawBlenderLeftTabs(Session& Target, const float Width, const float Height);
+    void DrawMeshGeneratorTab(Session& Target);
+    void DrawMeshGeneratorStatus();
+    void DrawMeshGeneratorResult(Session& Target);
+    void DrawMeshGeneratorAdvice();
+    void DrawMeshGeneratorPathField(const char* const Label, std::string& Value);
+    void AdvanceMeshGeneratorQueue();
+    void PollMeshGenerator();
+    void RefreshMeshGeneratorCache();
+    long long GeneratorFileKey(const std::string& Path) const;
+    void StartMeshGeneratorStage(const MeshGenerator::Stage Kind, const bool RunAll);
+    void SendMeshGeneratorToReviewer(Session& Target);
+    void DrawBlenderLiveToolbar(Session& Target, const bool LiveFresh, const bool HasPicture);
+    void DrawBlenderExistingShotPicker(Session& Target, const std::string& OwnDirectory);
+    void UseBlenderExistingShot(const Session& Target, const std::string& SourcePath);
+    void DrawBlenderMarkToolbar();
+    void DrawBlenderSnapshotStrip(Session& Target);
+    void HandleBlenderViewInput(const ImVec2 Min, const ImVec2 Max, const bool Enabled);
+    void BeginBlenderMarking(const Session& Target, const BlenderMarkup::Tool Kind);
+    void PollBlenderCapture(const Session& Target);
+    void FreezeBlenderFromLive(const Session& Target, const BlenderMarkup::Tool Kind, const std::string& Id);
+    void StartBlenderMarking(const BlenderMarkup::Tool Kind);
+    void FinishBlenderSnapshot();
+    void SendBlenderReview(Session& Target, const bool ToReviewer, const std::string& GeneratorNote = std::string());
+    std::string BlenderOwnDirectory(const Session& Target);
     float DrawLiveView(Session& CurrentSession, const ImVec2 PaneTopLeft, const ImVec2 PaneSize, const float HeaderHeight);
     float DrawChildBars(const Session& CurrentSession, const ImVec2 PaneTopLeft, const ImVec2 PaneSize, const float HeaderHeight, const float TopY);
     void PollChildProgress();
@@ -515,6 +682,8 @@ private:
     }
     static constexpr double LIVE_STALE_SECONDS = 5.0;
     static constexpr const char* LIVE_BUTTON_LABEL = "   Live";  // leading spaces leave room for the status dot
+    static constexpr const char* REVIEW_BUTTON_LABEL = "   Review";
+    static constexpr const char* BLENDER_REVIEWER_MODEL = "opus";
     // The session's newest live frame, re-checked on disk a few times a second.
     const LiveView::Frame& PollLiveFrame(const Session& CurrentSession)
     {
@@ -644,6 +813,8 @@ private:
     void AutoTitleTick(Session& CurrentSession);
     void ApplyAutoTitles();
     void PollSessionRequests();
+    void WatchRequestedStart(Session& Target);
+    static constexpr double NO_TASK_WARN_SECONDS = 60.0;
     std::string RequestProjectId(const Session* const Sender, const std::string& Cwd, std::string& Err);
     void OnStatus(Session& CurrentSession, Status OldStatus, Status NewStatus, double BusySeconds);
     void MarkDirty() { Dirty_ = true; }
@@ -708,7 +879,17 @@ private:
     // Splits clipboard text into one item per numbered/bulleted entry; empty unless it holds at least two entries.
     static std::vector<std::string> ParseFeedbackList(const std::string& Text);
     bool PasteFeedbackList(std::vector<std::array<char, FEEDBACK_LINE_CAPACITY>>& Lines, const size_t Index);
-    void DrawScreenshotPanel(const float Width);
+    // The right side panel: a tab strip over the Screenshots and Shells tabs.
+    void DrawRightPanel(const float Width);
+    void DrawScreenshotsTab();
+    void DrawShellsTab();
+    void DrawShellCard(const TranscriptScanner::ActiveCommand& Command, const float Width, const bool Finished, const std::time_t EndedAt);
+    ShellRow BuildShellRow(const TranscriptScanner::ActiveCommand& Command, const std::time_t Now) const;
+    std::set<std::string> SelectedSessionFamily() const;
+    std::vector<const Session*> ShellPanelSessions() const;
+    int RunningShellCount() const;
+    ShellHistory ShellHistory_;
+    ShellOutputTail ShellOutputTail_;
     bool DrawScreenshotCard(const ScreenshotFeed::Entry& Item, const float Width);
     void DrawToolbar();
     float OverflowChipWidth() const;
@@ -893,6 +1074,10 @@ private:
     char CommandBuffer_[512] = "";
     int FontSizeEdit_ = 16;
     int PaneTitleScaleEdit_ = 100;
+    int RamLimitModeEdit_ = 0;
+    int RamLimitPercentEdit_ = 50;
+    int RamLimitGbEdit_ = 16;
+    RamLimit RamLimit_;
     bool NotifyEdit_ = true;
     bool AskSessionNameEdit_ = false;
     SessionTitler Titler_;
@@ -953,12 +1138,15 @@ private:
     std::map<std::string, float> ShotAspects_;
     std::unique_ptr<ImageCache> Images_;
     LayoutDebug LayoutDebug_;
-    std::map<std::string, TranscriptScanner> TranscriptScanners_;
+    std::map<std::string, std::shared_ptr<TranscriptScanner>> TranscriptScanners_;
+    ScannerWorker ScannerWorker_;
     std::map<std::string, double> ScreenshotPollAt_;
     int UnseenScreenshots_ = 0;
 
     std::map<std::string, Handoff> Handoffs_;  // session id -> requested handoff summary
     bool AutoMode_ = false;
+    std::set<std::string> AutoProjects_;
+    std::set<std::string> AutoSessions_;
     std::map<std::string, AutoState> AutoStates_;
     CommandTiming CommandTiming_;
     std::map<std::string, std::vector<TranscriptScanner::ActiveCommand>> RunningCommands_;  // session id -> commands
@@ -969,6 +1157,35 @@ private:
     };
     std::map<std::string, OutputTailState> OutputTails_;  // background output file -> its last line
 
+    std::map<std::string, bool> BlenderProjects_;  // project id -> has a .blend file
+    std::string BlenderReviewId_;  // session shown in the Blender review window; empty when closed
+    bool BlenderReviewFocus_ = false;
+    double BlenderTouchAt_ = 0;
+    float BlenderSplitFraction_ = 0.62f;
+    std::string BlenderFrozenPath_;  // the picture being marked up; empty while the live view is shown
+    BlenderMarkup BlenderMarkup_;
+    BlenderReviewBatch BlenderBatch_;
+    std::string BlenderBatchOwnerId_;  // session the unsent snapshots belong to
+    int BlenderShownSnapshot_ = -1;    // snapshot shown large in the picture area; -1 shows the live view
+    bool BlenderRightShowsMesh_ = false;  // review window's right side: the model's session instead of its reviewer
+    BlenderReviewHistory BlenderHistory_;
+    MeshGenerator Generator_;
+    MeshGenerator::Progress GeneratorProgress_;
+    MeshGenerator::Report GeneratorReport_;
+    double GeneratorPolledAt_ = 0;
+    double GeneratorReportAt_ = 0;
+    bool GeneratorHandled_ = true;
+    std::vector<std::string> GeneratorConcepts_;
+    std::map<std::string, long long> GeneratorFileKeys_;
+    bool GeneratorHasMesh_ = false;
+    bool BlenderSaveBlend_ = true;                 // ask Blender for a .blend copy with each snapshot
+    std::string BlenderPendingId_;                 // snapshot id Blender is still capturing; empty when none
+    double BlenderPendingAt_ = 0;
+    BlenderMarkup::Tool BlenderPendingTool_ = BlenderMarkup::Tool::Rectangle;
+    std::string BlenderFrozenId_;                  // names the files of the picture being marked
+    std::string BlenderFrozenStatePath_;           // <tag>_snap_<id>.json for it, when Blender wrote one
+    std::string BlenderFrozenBlendPath_;           // .blend copy taken with it, when there is one
+    BlenderViewControl BlenderView_;
     std::map<std::string, bool> UnrealProjects_;  // project id -> has a .uproject
     std::set<std::string> LiveViewIds_;           // sessions showing their live view
     std::map<std::string, double> LiveFrameCheckAt_;
@@ -981,6 +1198,9 @@ private:
     std::map<std::string, std::vector<TranscriptScanner::ActiveCommand>> OverdueShells_;  // session id -> probably hung commands
     std::map<std::string, double> BackgroundCheckAt_;
     PeerVeins PeerVeins_;
+    std::string MentionHoverFromId_, MentionHoverToId_;  // set while the mouse is over a session mentioned in a terminal
+    std::string PendingMentionFocusId_;
+    PaneGrid PaneGrid_;
 
     ProjectLogWindow ProjectLogWindow_;
     ProjectSettingsWindow ProjectSettingsWindow_;

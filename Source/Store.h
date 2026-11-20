@@ -127,6 +127,9 @@ struct Settings
     std::string DefaultPermissionMode;  // empty = Claude's own default
     int FontSize = 16;  // terminal font, in points at 100% scale
     int PaneTitleScale = 100;  // session title text size in the pane header, percent of the normal UI text
+    int RamLimitMode = 0;      // 0 = no limit, 1 = percent of the PC's RAM, 2 = fixed amount in GB
+    int RamLimitPercent = 50;
+    int RamLimitGb = 16;
     ThemeColors Theme;
     KeyBindings Keys;
 };
@@ -140,6 +143,7 @@ struct UiState
     bool SidebarCollapsed = false;
     float ScreenshotPanelWidth = 340;
     bool ScreenshotPanelOpen = true;
+    std::string RightPanelTab = "shots";  // "shots" | "shells"
     std::set<std::string> HiddenScreenshots;  // file paths the user dismissed from the feed
     bool CloseWithoutConfirm = false;
     bool ArchiveOpen = false;

@@ -15,6 +15,17 @@ void Platform::Notify(GLFWwindow*, const std::string& title, const std::string& 
 
 void Platform::Flash(GLFWwindow*, bool) {}
 
+unsigned long long Platform::TotalRamBytes()
+{
+    const long Pages = sysconf(_SC_PHYS_PAGES);
+    const long PageSize = sysconf(_SC_PAGE_SIZE);
+    if (Pages <= 0 || PageSize <= 0)
+    {
+        return 0;
+    }
+    return static_cast<unsigned long long>(Pages) * static_cast<unsigned long long>(PageSize);
+}
+
 std::string Platform::PickFolder(GLFWwindow*)
 {
     return "";
@@ -68,6 +79,11 @@ void Platform::Shutdown(GLFWwindow*) {}
 bool Platform::ClipboardHasImage()
 {
     return false;
+}
+
+bool Platform::ClipboardHasText()
+{
+    return true;
 }
 
 void Platform::ApplyTitlebarColors(GLFWwindow*, RgbColor, RgbColor) {}

@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <set>
 #include <string>
 #include <vector>
@@ -43,7 +44,7 @@ public:
                 return Shots;
             }
             NextSearchAt_ = Now + SEARCH_INTERVAL_SECONDS;
-            TranscriptPath_ = Locate(ClaudeSessionId);
+            TranscriptPath_ = Locate(ClaudeSessionId, Cwd);
             if (TranscriptPath_.empty() == true)
             {
                 return Shots;
@@ -61,16 +62,36 @@ public:
     // window always implies the large one.
     int ContextPercent(const std::int64_t KnownWindow = 0) const
     {
+        std::lock_guard<std::mutex> const Guard(Mutex_);
         if (ContextTokens_ <= 0)
         {
             return -1;
         }
-        const std::int64_t Window = ContextWindow(KnownWindow);
+        const std::int64_t Window = ContextWindowUnlocked(KnownWindow);
         return static_cast<int>(std::min<std::int64_t>(100, (ContextTokens_ * 100 + Window / 2) / Window));
     }
 
     // KnownWindow comes from the model list; without it the size is guessed from the model id.
     std::int64_t ContextWindow(const std::int64_t KnownWindow = 0) const
+    {
+        std::lock_guard<std::mutex> const Guard(Mutex_);
+        return ContextWindowUnlocked(KnownWindow);
+    }
+
+    std::int64_t ContextTokens() const
+    {
+        std::lock_guard<std::mutex> const Guard(Mutex_);
+        return ContextTokens_;
+    }
+
+    std::string CurrentModel() const
+    {
+        std::lock_guard<std::mutex> const Guard(Mutex_);
+        return ContextModel_;
+    }
+
+private:
+    std::int64_t ContextWindowUnlocked(const std::int64_t KnownWindow) const
     {
         const bool Past = KnownWindow > 0 && ContextTokens_ > KnownWindow;
         if (KnownWindow > 0 && Past == false)
@@ -81,15 +102,7 @@ public:
         return LargeWindow == true ? LARGE_CONTEXT_WINDOW : STANDARD_CONTEXT_WINDOW;
     }
 
-    std::int64_t ContextTokens() const
-    {
-        return ContextTokens_;
-    }
-
-    const std::string& CurrentModel() const
-    {
-        return ContextModel_;
-    }
+public:
 
     struct ActiveCommand
     {
@@ -108,6 +121,7 @@ public:
     // process; anything from an earlier run died with it) that have not finished yet, oldest first.
     std::vector<ActiveCommand> RunningCommands(const std::time_t Since) const
     {
+        std::lock_guard<std::mutex> const Guard(Mutex_);
         const std::time_t Now = std::time(nullptr);
         std::vector<ActiveCommand> Running;
         for (const std::pair<const std::string, ActiveCommand>& Item : Commands_)
@@ -130,6 +144,7 @@ public:
     // Foreground shell commands with no result long after their own time limit should have ended them, so they are probably hung.
     std::vector<ActiveCommand> OverdueShells(const std::time_t Since) const
     {
+        std::lock_guard<std::mutex> const Guard(Mutex_);
         const std::time_t Now = std::time(nullptr);
         std::vector<ActiveCommand> Overdue;
         for (const std::pair<const std::string, ActiveCommand>& Item : Commands_)
@@ -159,19 +174,39 @@ public:
     // Messages seen since the last call, oldest first.
     std::vector<PeerMessage> TakePeerMessages()
     {
+        std::lock_guard<std::mutex> const Guard(Mutex_);
         std::vector<PeerMessage> Taken;
         Taken.swap(PeerMessages_);
         return Taken;
     }
 
     // When the user last typed a prompt into this session, as opposed to a tool result, a notice or another session's message.
-    std::time_t LastUserPromptAt() const { return LastUserPromptAt_; }
+    std::time_t LastUserPromptAt() const
+    {
+        std::lock_guard<std::mutex> const Guard(Mutex_);
+        return LastUserPromptAt_;
+    }
 
     // What the user typed as the first prompt of this transcript (empty until they send one).
-    const std::string& FirstUserPrompt() const { return FirstUserPrompt_; }
+    std::string FirstUserPrompt() const
+    {
+        std::lock_guard<std::mutex> const Guard(Mutex_);
+        return FirstUserPrompt_;
+    }
+
+    // When this session last generated, imported or edited a 3D model (0 if it never has).
+    std::time_t LastMeshWork() const
+    {
+        std::lock_guard<std::mutex> const Guard(Mutex_);
+        return LastMeshWorkAt_;
+    }
 
     // The text of Claude's most recent reply in the main conversation (empty before its first reply).
-    const std::string& LastAssistantText() const { return LastAssistantText_; }
+    std::string LastAssistantText() const
+    {
+        std::lock_guard<std::mutex> const Guard(Mutex_);
+        return LastAssistantText_;
+    }
 
     // Background shells and monitors still running; Claude picks up again when they report.
     int RunningBackgroundTasks(const std::time_t Since) const
@@ -279,6 +314,42 @@ private:
             Position = DigitsEnd + 1;
         }
         return Total;
+    }
+
+    void NoteMeshWork(const nlohmann::json& Block, const std::time_t When)
+    {
+        static constexpr const char* SCENE_CHANGING_BLENDER_TOOLS[] = {"mcp__blender__execute_blender_code", "mcp__blender__generate_3d",
+                                                                       "mcp__blender__import_asset", "mcp__blender__generate_gaussian_world"};
+        static constexpr const char* MESH_EXTENSIONS[] = {".blend", ".fbx", ".obj", ".glb", ".gltf", ".stl", ".ply"};
+        const std::string Name = Block.value("name", "");
+        for (const char* const Tool : SCENE_CHANGING_BLENDER_TOOLS)
+        {
+            if (Name == Tool)
+            {
+                LastMeshWorkAt_ = When;
+                return;
+            }
+        }
+        const bool IsShell = Name == "Bash" || Name == "PowerShell";
+        if ((IsShell == false && Name != "Write" && Name != "Edit") || Block.contains("input") == false || Block["input"].is_object() == false)
+        {
+            return;
+        }
+        std::string Text = Block["input"].dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+        std::transform(Text.begin(), Text.end(), Text.begin(), [](const unsigned char Character) { return static_cast<char>(std::tolower(Character)); });
+        if (IsShell == true && Text.find("blender") != std::string::npos)
+        {
+            LastMeshWorkAt_ = When;
+            return;
+        }
+        for (const char* const Extension : MESH_EXTENSIONS)
+        {
+            if (Text.find(Extension) != std::string::npos)
+            {
+                LastMeshWorkAt_ = When;
+                return;
+            }
+        }
     }
 
     void NoteCommandStarted(const nlohmann::json& Block, const std::time_t When)
@@ -500,6 +571,7 @@ private:
                 EndTask(Block["input"].value("task_id", ""));
                 continue;
             }
+            NoteMeshWork(Block, When);
             NoteCommandStarted(Block, When);
         }
     }
@@ -621,7 +693,7 @@ private:
     static constexpr double PENDING_TIMEOUT_SECONDS = 120.0;
     static constexpr std::time_t MODIFIED_SLACK_SECONDS = 5;
     static constexpr std::time_t SHOT_DIRECTORY_LOOKBACK_SECONDS = 600;
-    static constexpr std::uintmax_t MAX_INITIAL_BYTES = 6ull * 1024 * 1024;
+    static constexpr std::uintmax_t MAX_INITIAL_BYTES = 1ull * 1024 * 1024;
     static constexpr std::int64_t STANDARD_CONTEXT_WINDOW = 200000;
     static constexpr std::int64_t LARGE_CONTEXT_WINDOW = 1000000;
 
@@ -643,7 +715,8 @@ private:
         return true;
     }
 
-    static std::filesystem::path Locate(const std::string& ClaudeSessionId)
+    // Claude names a project's folder after its working directory with every non-alphanumeric character turned into '-'.
+    static std::filesystem::path Locate(const std::string& ClaudeSessionId, const std::string& Cwd)
     {
         const std::filesystem::path Root = ProjectsRoot();
         if (Root.empty() == true)
@@ -651,6 +724,19 @@ private:
             return {};
         }
         std::error_code ErrorCode;
+        std::string FolderName = Cwd;
+        for (char& Character : FolderName)
+        {
+            if (std::isalnum(static_cast<unsigned char>(Character)) == 0)
+            {
+                Character = '-';
+            }
+        }
+        const std::filesystem::path Direct = Root / FolderName / (ClaudeSessionId + ".jsonl");
+        if (FolderName.empty() == false && std::filesystem::is_regular_file(Direct, ErrorCode) == true)
+        {
+            return Direct;
+        }
         for (const std::filesystem::directory_entry& Directory : std::filesystem::directory_iterator(Root, ErrorCode))
         {
             const std::filesystem::path Candidate = Directory.path() / (ClaudeSessionId + ".jsonl");
@@ -795,13 +881,19 @@ private:
         {
             return;
         }
-        RecordCommands(Entry);
-        RecordPeerMessage(Entry);
+        {
+            std::lock_guard<std::mutex> const Guard(Mutex_);
+            RecordCommands(Entry);
+            RecordPeerMessage(Entry);
+            if (Entry.contains("message") == true)
+            {
+                RecordUsage(Entry);
+            }
+        }
         if (Entry.contains("message") == false)
         {
             return;
         }
-        RecordUsage(Entry);
         const std::time_t EntryTime = ParseTimestamp(Entry.value("timestamp", ""));
         if (EntryTime == 0)
         {
@@ -1002,6 +1094,7 @@ private:
         Pending_ = std::move(Remaining);
     }
 
+    mutable std::mutex Mutex_;  // guards what the getters read; Poll itself must run on one thread at a time
     std::filesystem::path TranscriptPath_;
     double NextSearchAt_ = 0;
     std::uintmax_t Offset_ = 0;
@@ -1014,6 +1107,7 @@ private:
     std::int64_t ContextTokens_ = 0;
     std::string ContextModel_;
     std::string LastAssistantText_;
+    std::time_t LastMeshWorkAt_ = 0;
     std::map<std::string, ActiveCommand> Commands_;  // tool_use id (or "task:<id>") -> running command
     std::set<std::string> EndedTasks_;
     std::vector<PeerMessage> PeerMessages_;

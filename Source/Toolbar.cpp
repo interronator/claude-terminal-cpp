@@ -405,6 +405,9 @@ void App::DrawToolbar()
         std::snprintf(CommandBuffer_, sizeof CommandBuffer_, "%s", State_.AppSettings.ClaudeCommand.c_str());
         FontSizeEdit_ = State_.AppSettings.FontSize;
         PaneTitleScaleEdit_ = State_.AppSettings.PaneTitleScale;
+        RamLimitModeEdit_ = State_.AppSettings.RamLimitMode;
+        RamLimitPercentEdit_ = State_.AppSettings.RamLimitPercent;
+        RamLimitGbEdit_ = State_.AppSettings.RamLimitGb;
         NotifyEdit_ = State_.AppSettings.Notifications;
         AutoStartEdit_ = State_.AppSettings.AutoStartWindow;
         AskSessionNameEdit_ = State_.AppSettings.AskSessionName;
@@ -478,7 +481,8 @@ void App::DrawPauseButton()
 
 void App::DrawAutoButton()
 {
-    if (AutoMode_ == true)
+    const bool AnyAuto = AutoMode_ == true || AutoProjects_.empty() == false || AutoSessions_.empty() == false;
+    if (AnyAuto == true)
     {
         // Pulse so it's obvious from across the room that sessions are running unattended.
         const float Pulse = 0.5f + 0.5f * std::sin(static_cast<float>(Now_) * 2.0f);
@@ -486,7 +490,7 @@ void App::DrawAutoButton()
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4(DoneColor_));
     }
     const bool Clicked = ImGui::Button("Auto##autoMode", ImVec2(AutoButtonWidth(), 0));
-    if (AutoMode_ == true)
+    if (AnyAuto == true)
     {
         ImGui::PopStyleColor(2);
     }
@@ -497,7 +501,8 @@ void App::DrawAutoButton()
                                       "continue whenever they finish a turn. Click to turn it off (sessions are told you're back)."
                                     : "Turn on when you're stepping away: every session is told to keep working without asking\n"
                                       "you, making sensible choices itself (nothing destructive), and is nudged to continue when it\n"
-                                      "stops. Approve/deny permission prompts still wait for you.");
+                                      "stops. Approve/deny permission prompts still wait for you.\n"
+                                      "To do this for one project only, right-click the project in the sidebar.");
     }
     if (Clicked == true)
     {

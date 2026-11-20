@@ -102,6 +102,10 @@ void App::DrawSidebarSessionRow(const SidebarRow& Row, std::string& DragSourceId
     const float CloseWidth = RowCloseButtonWidth();
     const float SelectableWidth = RowWidth - 10 * Scale + CloseWidth;
     const ImVec2 ClosePos(RowPos.x + SelectableWidth - CloseWidth, RowPos.y);
+    if (ImGui::IsRectVisible(RowPos, ImVec2(RowPos.x + SelectableWidth, RowPos.y + RowHeight)) == true)
+    {
+        PeerVeins_.AddRow(CurrentSession.Rec.Id, RowPos, ImVec2(RowPos.x + SelectableWidth, RowPos.y + RowHeight));
+    }
     const bool CloseHovered =
         ImGui::IsWindowHovered() == true && ImGui::IsMouseHoveringRect(ClosePos, ImVec2(ClosePos.x + CloseWidth, ClosePos.y + RowHeight)) == true;
     // Hovering the "x" steals hover from the row, so paint the row as hovered ourselves to keep them one piece.
@@ -214,6 +218,11 @@ void App::DrawSidebarSessionRow(const SidebarRow& Row, std::string& DragSourceId
             RenameIsProject_ = false;
             std::snprintf(NameBuffer_, sizeof NameBuffer_, "%s", CurrentSession.Rec.Name.c_str());
             OpenModal(Modal::Rename);
+        }
+        const Session* const ReviewTarget = ReviewTargetFor(CurrentSession);
+        if (ImGui::MenuItem(ReviewTarget != nullptr ? "Review 3D model" : "Review 3D model (debug)") == true)
+        {
+            OpenBlenderReview(ReviewTarget != nullptr ? ReviewTarget->Rec.Id : CurrentSession.Rec.Id);
         }
         if (IsOpen == true && ImGui::MenuItem("Hide pane") == true)
         {

@@ -140,6 +140,22 @@ bool Platform::ClipboardHasImage()
     return (IsClipboardFormatAvailable(CF_DIB) != FALSE) || (IsClipboardFormatAvailable(CF_BITMAP) != FALSE) || (IsClipboardFormatAvailable(CF_DIBV5) != FALSE);
 }
 
+unsigned long long Platform::TotalRamBytes()
+{
+    MEMORYSTATUSEX Status{};
+    Status.dwLength = sizeof(Status);
+    if (GlobalMemoryStatusEx(&Status) == FALSE)
+    {
+        return 0;
+    }
+    return Status.ullTotalPhys;
+}
+
+bool Platform::ClipboardHasText()
+{
+    return (IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE) || (IsClipboardFormatAvailable(CF_TEXT) != FALSE);
+}
+
 void Platform::ApplyTitlebarColors(GLFWwindow* Window, RgbColor Caption, RgbColor Text)
 {
     HWND const Hwnd = glfwGetWin32Window(Window);

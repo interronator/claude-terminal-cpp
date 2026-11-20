@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <fstream>
 
 #include "BuildScripts.h"
 #include "PeerNames.h"
@@ -16,10 +18,15 @@ constexpr double BUSY_AFTER_SEC = 0.8;  // continuous output before we call it "
 constexpr double ECHO_SEC = 0.25;       // output this soon after a keystroke is just echo
 
 // Phrases that mean Claude is blocked on you. Checked only against the bottom of the screen.
-const char* WaitPatterns[] = {"Do you want to", "Would you like to", "Esc to cancel", "(y/n)", "[y/N]", "\xE2\x9D\xAF 1. Yes",
-                               "\xE2\x9D\xAF 1. Yes,"};
-// Usage-limit notices; matched case-insensitively against the bottom of the screen.
-const char* LimitPatterns[] = {"limit reached", "hit your limit", "limit will reset", "wait for limit to reset", "limit resets"};
+// Only interactive prompts count (a selection menu, a y/n question, a cancel hint). Question phrases alone also show up in Claude's normal replies.
+// A selection menu is recognised only by a line that starts with its cursor; the other hints only in the last few lines, where a dialog's footer sits.
+const char* WaitPatterns[] = {"Esc to cancel", "Enter to select", "(y/n)", "[y/N]"};
+const char* const MENU_PATTERN = "\xE2\x9D\xAF 1.";
+constexpr size_t FOOTER_TAIL_LINES = 4;
+// Usage-limit notices; matched case-insensitively against the last few lines only, so old notices and /usage output scrolled up do not count.
+const char* LimitPatterns[] = {"limit reached", "hit your limit", "wait for limit to reset"};
+constexpr size_t LIMIT_TAIL_LINES = 6;
+constexpr size_t WAIT_TAIL_LINES = 14;
 }  // namespace
 
 std::function<void()> Session::Wake;
@@ -56,12 +63,23 @@ bool Session::LooksLikeWaiting(const std::string& Screen)
         }
         Pos = End + 1;
     }
+    for (size_t Index = Lines.size() > WAIT_TAIL_LINES ? Lines.size() - WAIT_TAIL_LINES : 0; Index < Lines.size(); Index++)
+    {
+        if (Util::Trim(Lines[Index]).rfind(MENU_PATTERN, 0) == 0)
+        {
+            return true;
+        }
+    }
     std::string Tail;
-    for (size_t Index = Lines.size() > 14 ? Lines.size() - 14 : 0; Index < Lines.size(); Index++)
+    for (size_t Index = Lines.size() > FOOTER_TAIL_LINES ? Lines.size() - FOOTER_TAIL_LINES : 0; Index < Lines.size(); Index++)
     {
         Tail += Lines[Index] + "\n";
     }
-    std::string LowerTail = Tail;
+    std::string LowerTail;
+    for (size_t Index = Lines.size() > LIMIT_TAIL_LINES ? Lines.size() - LIMIT_TAIL_LINES : 0; Index < Lines.size(); Index++)
+    {
+        LowerTail += Lines[Index] + "\n";
+    }
     std::transform(LowerTail.begin(), LowerTail.end(), LowerTail.begin(), [](unsigned char Character) { return (char)std::tolower(Character); });
     for (const char* const Pattern : LimitPatterns)
     {
@@ -104,11 +122,33 @@ bool Session::Spawn(const std::string& Command, int Cols, int Rows, bool Resume,
     {
         Argv.push_back("claude");
     }
-    Argv.push_back("--append-system-prompt");
     std::string SystemPrompt = ExtraGuidance.empty() == true ? BuildScripts::Guidance() : BuildScripts::Guidance() + " " + ExtraGuidance;
     // Windows launches through cmd.exe, which toggles quoting at every double quote, so an embedded one exposes | < > & to the shell.
     std::replace(SystemPrompt.begin(), SystemPrompt.end(), '"', '\'');
-    Argv.push_back(SystemPrompt);
+    constexpr size_t MAX_INLINE_PROMPT = 4000;  // cmd.exe's whole command line limit is 8191 characters
+    bool UsedFile = false;
+    if (SystemPrompt.size() > MAX_INLINE_PROMPT)
+    {
+        std::error_code FileError;
+        const std::filesystem::path PromptPath = std::filesystem::temp_directory_path(FileError) / ("ClaudeTerminalPrompt-" + Rec.ClaudeSessionId + ".txt");
+        if (FileError.value() == 0)
+        {
+            std::ofstream PromptFile(PromptPath, std::ios::binary | std::ios::trunc);
+            PromptFile << SystemPrompt;
+            PromptFile.close();
+            if (PromptFile.fail() == false)
+            {
+                Argv.push_back("--append-system-prompt-file");
+                Argv.push_back(PromptPath.string());
+                UsedFile = true;
+            }
+        }
+    }
+    if (UsedFile == false)
+    {
+        Argv.push_back("--append-system-prompt");
+        Argv.push_back(SystemPrompt);
+    }
     if (Platform::IsOnPath(Argv[0]) == false)
     {
         Err = "Claude Code CLI ('" + Argv[0] + "') was not found. Install it with: npm install -g @anthropic-ai/claude-code (see docs.claude.com/en/docs/claude-code), then restart this session. First run asks you to sign in.";

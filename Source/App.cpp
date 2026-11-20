@@ -213,6 +213,10 @@ Session* App::InputSession() const
     {
         return nullptr;
     }
+    if (InBlenderReview(Active->Rec.Id) == true)
+    {
+        return Active;
+    }
     const std::vector<std::string> Visible = VisibleIds();
     if (std::find(Visible.begin(), Visible.end(), Active->Rec.Id) == Visible.end())
     {
@@ -551,7 +555,10 @@ void App::CloseSession(const std::string& Id, int WorktreeAction)
     CurrentSession->Kill(Now_, nullptr);
     ScreenshotFeed_.RemoveSession(Id);
     TranscriptScanners_.erase(Id);
+    ShellHistory_.Forget(Id);
     ScreenshotPollAt_.erase(Id);
+    AutoSessions_.erase(Id);
+    AutoStates_.erase(Id);
     PeerLinks_.Forget(Id);
     const Project* const Owner = FindProject(CurrentSession->Rec.ProjectId);
     State_.Archive.push_back({CurrentSession->Rec.Id, CurrentSession->Rec.Name, Owner != nullptr ? Owner->Name : std::string(), CurrentSession->Rec});
@@ -873,8 +880,11 @@ double App::FrameWaitSeconds() const
 void App::TickSessions(double Now)
 {
     Now_ = Now;
+    RamLimit_.Refresh(State_.AppSettings, Sessions_, Now);
     Session::StatusFn const Callback = StatusCallback();
     std::vector<std::string> FinishedIds;
+    bool LaunchedThisTick = false;
+    ApplyScanResults();
     for (const std::unique_ptr<Session>& CurrentSession : Sessions_)
     {
         if (CurrentSession->ClosePending == true && CurrentSession->CurrentStatus == Status::Idle && CurrentSession->PendingPrompt.empty() == true &&
@@ -885,6 +895,13 @@ void App::TickSessions(double Now)
         }
         if (CurrentSession->Attempted == false && CurrentSession->Rec.WasRunning == true && IsSessionOpen(CurrentSession->Rec.Id) == false)
         {
+            if (LaunchedThisTick == true)
+            {
+                glfwPostEmptyEvent();
+                CurrentSession->Tick(Now_, Callback);
+                continue;
+            }
+            LaunchedThisTick = true;
             CurrentSession->Attempted = true;
             std::string Err;
             if (StartSession(*CurrentSession, BACKGROUND_COLS, BACKGROUND_ROWS, Err) == false)
@@ -894,12 +911,14 @@ void App::TickSessions(double Now)
             MarkDirty();
         }
         CurrentSession->Tick(Now_, Callback);
-        if (CurrentSession->PendingPrompt.empty() == false && CurrentSession->CurrentStatus == Status::Idle)
+        if (CurrentSession->PendingPrompt.empty() == false && CurrentSession->CurrentStatus == Status::Idle &&
+            CurrentSession->UserIsTyping(Now_) == false)
         {
             const std::string Prompt = std::move(CurrentSession->PendingPrompt);
             CurrentSession->PendingPrompt.clear();
             SendPrompt(*CurrentSession, Prompt);
         }
+        WatchRequestedStart(*CurrentSession);
         ConfirmSubmitted(*CurrentSession);
         AutoContinueTick(*CurrentSession);
         PollScreenshots(*CurrentSession);
@@ -941,7 +960,9 @@ void App::Frame(double Now)
 
     PollSessionRequests();
     PollChildProgress();
-    AutoContinueHandoffs();
+    PollMeshGenerator();
+    ProcessHandoffs();
+    ApplyMentionFocus();
     TickSessions(Now);
     EnsureActiveVisible();
 
@@ -980,6 +1001,7 @@ void App::Frame(double Now)
     DrawProjectLog();
     DrawProjectSettings();
     DrawNightlyBuild();
+    DrawBlenderReview();
     DrawModals();
     DrawToasts();
 

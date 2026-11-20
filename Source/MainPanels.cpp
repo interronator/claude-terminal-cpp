@@ -42,13 +42,12 @@ void App::DrawMain(const float Width, const float Height)
     const float Gap = 6 * Scale;
     int const Count = (int)Ids.size();
     int const Columns = Count <= 2 ? Count : (int)std::ceil(std::sqrt((double)Count));
-    int const Rows = (Count + Columns - 1) / Columns;
     const ImVec2 PanesMin = ImGui::GetCursorScreenPos();
     ImVec2 Origin = ImGui::GetCursorPos();
     Origin.x += Gap;
     Origin.y += Gap;
-    float const CellWidth = (Avail.x - Gap * (Columns + 1)) / Columns;
-    float const CellHeight = (Avail.y - Gap * (Rows + 1)) / Rows;
+    PaneGrid_.Prepare(Count, Columns);
+    PaneGrid_.Compute(Origin, Avail, Gap);
 
     for (int Index = 0; Index < Count; Index++)
     {
@@ -57,38 +56,29 @@ void App::DrawMain(const float Width, const float Height)
         {
             continue;
         }
-        int Row = Index / Columns, Col = Index % Columns;
-        float Width = CellWidth;
-        if (Index == Count - 1 && Count % Columns != 0)
+        const PaneRect& Cell = PaneGrid_.Cell(Index);
+        const ImVec2 Pos = Cell.Pos;
+        const ImVec2 CellSize = Cell.Size;
+        if (InBlenderReview(CurrentSession->Rec.Id) == true)
         {
-            Width = CellWidth * (Columns - (Count % Columns) + 1) + Gap * (Columns - (Count % Columns));
+            ImGui::SetCursorPos(Pos);
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, SurfaceColorV4_);
+            ImGui::BeginChild(("##blenderHeld" + CurrentSession->Rec.Id).c_str(), CellSize, ImGuiChildFlags_Borders);
+            ImGui::TextDisabled("%s", CurrentSession->Rec.Name.c_str());
+            ImGui::TextUnformatted("Shown in the Blender review window");
+            if (ImGui::Button("Bring to front") == true)
+            {
+                BlenderReviewFocus_ = true;
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+            continue;
         }
-        ImVec2 const Pos(Origin.x + Col * (CellWidth + Gap), Origin.y + Row * (CellHeight + Gap));
-        DrawPane(*CurrentSession, Pos, ImVec2(Width, CellHeight), Index);
+        DrawPane(*CurrentSession, Pos, CellSize, Index);
     }
+    PaneGrid_.DrawSplitters(220.0f * Scale, 120.0f * Scale, AccentColor_);
     DrawPeerOverlay(PanesMin, ImVec2(PanesMin.x + Avail.x, PanesMin.y + Avail.y), Gap);
     ImGui::EndChild();
-}
-
-void App::BuildAndRun(Session& CurrentSession)
-{
-    const std::string Dir = CurrentSession.Rec.Cwd;
-    if (BuildScripts::BothExist(Dir) == false)
-    {
-        const std::string Created = BuildScripts::CreateMissing(Dir);
-        SendPrompt(CurrentSession, BuildScripts::SetupRequest(Created));
-        for (const std::unique_ptr<Session>& Other : Sessions_)
-        {
-            if (Other.get() == &CurrentSession || Other->Rec.Cwd != Dir || Other->CurrentStatus != Status::Idle)
-            {
-                continue;
-            }
-            SendPrompt(*Other, BuildScripts::Guidance());
-        }
-        ShowToast("Created " + Created + " and asked the session to finish them. Click Build & Run again when it's done.");
-        return;
-    }
-    Platform::RunScripts(Dir, "call build.bat && call run.bat");
 }
 
 float App::FeedbackPanelHeight()
@@ -362,12 +352,19 @@ void App::DrawMainAndPanel()
         }
         if (ImGui::IsItemHovered() == true)
         {
-            ImGui::SetTooltip("Show screenshots");
+            ImGui::SetTooltip("Show side panel");
         }
         if (UnseenScreenshots_ > 0)
         {
             ImGui::PushStyleColor(ImGuiCol_Text, AccentColorV4_);
             ImGui::Text("%d", UnseenScreenshots_);
+            ImGui::PopStyleColor();
+        }
+        const int RunningShells = RunningShellCount();
+        if (RunningShells > 0)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, WaitingColorV4_);
+            ImGui::Text("%d", RunningShells);
             ImGui::PopStyleColor();
         }
         ImGui::EndChild();
@@ -398,5 +395,5 @@ void App::DrawMainAndPanel()
     ImGui::PopStyleColor();
     ImGui::SameLine(0, 0);
 
-    DrawScreenshotPanel(PanelWidth);
+    DrawRightPanel(PanelWidth);
 }

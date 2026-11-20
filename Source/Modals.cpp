@@ -385,6 +385,23 @@ void App::DrawSettingsModal()
     ImGui::TextDisabled("Session title text size");
     ImGui::SetNextItemWidth(Full);
     ImGui::SliderInt("##pts", &PaneTitleScaleEdit_, 70, 200, "%d%%");
+    ImGui::TextDisabled("RAM limit for all Claude sessions here (stops new sessions starting once reached)");
+    ImGui::RadioButton("No limit", &RamLimitModeEdit_, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton("Percent of PC RAM", &RamLimitModeEdit_, 1);
+    ImGui::SameLine();
+    ImGui::RadioButton("Fixed amount", &RamLimitModeEdit_, 2);
+    if (RamLimitModeEdit_ == 1)
+    {
+        ImGui::SetNextItemWidth(Full);
+        ImGui::SliderInt("##ramPercent", &RamLimitPercentEdit_, 5, 100, "%d%% of total RAM");
+    }
+    else if (RamLimitModeEdit_ == 2)
+    {
+        ImGui::SetNextItemWidth(Full);
+        ImGui::SliderInt("##ramGb", &RamLimitGbEdit_, 1, std::max(2, RamLimit_.TotalGb() > 0 ? static_cast<int>(RamLimit_.TotalGb()) : 64), "%d GB");
+    }
+    ImGui::TextDisabled("Sessions use %.1f GB now of %.1f GB total RAM.", RamLimit_.UsedGb(), RamLimit_.TotalGb());
     ImGui::Checkbox("Desktop notifications when a background session needs you", &NotifyEdit_);
     ImGui::Checkbox("Start the 5-hour usage window as soon as it is free (sends a tiny Haiku message)", &AutoStartEdit_);
     ImGui::Checkbox("Use GitHub access (shows login status; needs the gh CLI)", &GitHubEdit_);
@@ -466,6 +483,10 @@ void App::DrawSettingsModal()
         State_.AppSettings.DefaultPermissionMode = PermissionModeEdit_;
         State_.AppSettings.Keys = KeysEdit_;
         State_.AppSettings.PaneTitleScale = PaneTitleScaleEdit_;
+        State_.AppSettings.RamLimitMode = RamLimitModeEdit_;
+        State_.AppSettings.RamLimitPercent = RamLimitPercentEdit_;
+        State_.AppSettings.RamLimitGb = RamLimitGbEdit_;
+        RamLimit_.Invalidate();
         if (GitHubEdit_ != State_.AppSettings.GitHubEnabled)
         {
             State_.AppSettings.GitHubEnabled = GitHubEdit_;

@@ -74,14 +74,14 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
     }
     const float TitleEndX = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
 
-    const std::map<std::string, TranscriptScanner>::const_iterator Scanner = TranscriptScanners_.find(CurrentSession.Rec.Id);
-    const int ContextPercent = Scanner != TranscriptScanners_.end() ? Scanner->second.ContextPercent(ContextWindowOf(Scanner->second)) : -1;
+    const std::map<std::string, std::shared_ptr<TranscriptScanner>>::const_iterator Scanner = TranscriptScanners_.find(CurrentSession.Rec.Id);
+    const int ContextPercent = Scanner != TranscriptScanners_.end() ? Scanner->second->ContextPercent(ContextWindowOf(*Scanner->second)) : -1;
 
     const char* const MaximizeLabel = MaximizedId_ == CurrentSession.Rec.Id ? "Restore" : "Max";
     const float ButtonPad = 5 * Scale * 2;
     const float ItemGap = 6 * Scale;
     const bool HasMaximize = State_.Ui.Mode == "tile";
-    const float ButtonsWidth = ImGui::CalcTextSize("Build & Run").x + ImGui::CalcTextSize("Open").x + ImGui::CalcTextSize("Restart").x + ImGui::CalcTextSize("x").x +
+    const float ButtonsWidth = ImGui::CalcTextSize("Auto").x + ImGui::CalcTextSize("Open").x + ImGui::CalcTextSize("Restart").x + ImGui::CalcTextSize("x").x +
                                ButtonPad * (HasMaximize ? 5 : 4) + ItemGap + (HasMaximize ? ImGui::CalcTextSize(MaximizeLabel).x : 0.0f);
     std::string const Shortcut = "Alt+" + std::to_string(Index + 1);
     const float ShortcutWidth = ImGui::CalcTextSize(Shortcut.c_str()).x;
@@ -103,16 +103,69 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
     }
     ImGui::SetCursorPos(ImVec2(ShortcutX, (HeaderHeight - ImGui::GetFrameHeight()) * 0.5f));
     ImGui::TextDisabled("%s", Shortcut.c_str());
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) == true && ImGui::IsMouseClicked(ImGuiMouseButton_Right) == true &&
+        ImGui::IsMouseHoveringRect(HeaderPos, ImVec2(HeaderPos.x + ShortcutX, HeaderPos.y + HeaderHeight)) == true)
+    {
+        ImGui::OpenPopup("##paneTitleMenu");
+    }
+    if (ImGui::BeginPopup("##paneTitleMenu") == true)
+    {
+        const std::string PeerName = PeerNames::For(CurrentSession.Rec.Name, CurrentSession.Rec.Id);
+        if (ImGui::MenuItem("Rename session") == true)
+        {
+            ModalTarget_ = CurrentSession.Rec.Id;
+            RenameIsProject_ = false;
+            std::snprintf(NameBuffer_, sizeof NameBuffer_, "%s", CurrentSession.Rec.Name.c_str());
+            OpenModal(Modal::Rename);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Copy session id") == true)
+        {
+            ImGui::SetClipboardText(PeerName.c_str());
+            ShowToast("Copied " + PeerName);
+        }
+        if (ImGui::IsItemHovered() == true)
+        {
+            ImGui::SetTooltip("The name other sessions use to message this one:\n%s", PeerName.c_str());
+        }
+        if (CurrentSession.Rec.ClaudeSessionId.empty() == false && ImGui::MenuItem("Copy Claude conversation id") == true)
+        {
+            ImGui::SetClipboardText(CurrentSession.Rec.ClaudeSessionId.c_str());
+            ShowToast("Copied conversation id");
+        }
+        if (CurrentSession.Rec.Cwd.empty() == false && ImGui::MenuItem("Copy folder path") == true)
+        {
+            ImGui::SetClipboardText(CurrentSession.Rec.Cwd.c_str());
+            ShowToast("Copied folder path");
+        }
+        ImGui::EndPopup();
+    }
     ImGui::SameLine();
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(5 * Scale, 1 * Scale));
     ImGui::PushID("hdr");
-    if (ImGui::SmallButton("Build & Run") == true)
+    const bool LocalAuto = SessionIsAuto(CurrentSession.Rec.Id);
+    const bool InheritedAuto = LocalAuto == false && AutoActiveFor(CurrentSession) == true;
+    if (LocalAuto == true || InheritedAuto == true)
     {
-        BuildAndRun(CurrentSession);
+        const float Pulse = LocalAuto == true ? 0.5f + 0.5f * std::sin(static_cast<float>(Now_) * 2.0f) : 0.0f;
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(UiHelpers::WithAlpha(DoneColor_, static_cast<int>(LocalAuto == true ? 150 + 90 * Pulse : 90))));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4(DoneColor_));
+    }
+    const bool AutoClicked = ImGui::SmallButton("Auto");
+    if (LocalAuto == true || InheritedAuto == true)
+    {
+        ImGui::PopStyleColor(2);
     }
     if (ImGui::IsItemHovered() == true)
     {
-        ImGui::SetTooltip("Run build.bat then run.bat (creates them if missing)");
+        ImGui::SetTooltip("%s", LocalAuto == true
+                                    ? "Auto is ON for this session only: it keeps working without asking you and is nudged to continue.\nClick to turn it off. The toolbar Auto button resets this."
+                                    : (InheritedAuto == true ? "Auto is on for this session through the toolbar or project Auto."
+                                                             : "Turn on Auto for this session only: it keeps working without asking you and is nudged to continue."));
+    }
+    if (AutoClicked == true && InheritedAuto == false)
+    {
+        SetSessionAutoMode(CurrentSession, LocalAuto == false);
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("Open") == true)
@@ -167,9 +220,13 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
     const float ModelPickerWidth = PaneModelPickerWidth(CurrentSession) + ItemGap;
     const float LiveButtonWidth = HasLiveButton == true ? ImGui::CalcTextSize(LIVE_BUTTON_LABEL).x + GitPad + ItemGap : 0.0f;
     const Handoff* const PendingHandoff = PollHandoff(CurrentSession);
-    const char* const HandoffLabel = PendingHandoff == nullptr ? "Handoff###handoff" : PendingHandoff->Ready == true ? "Continue fresh###handoff" : "Handoff...###handoff";
+    const char* const HandoffLabel = PendingHandoff == nullptr ? "Handoff###handoff" : "Handoff...###handoff";
     const float HandoffWidth = ImGui::CalcTextSize(HandoffLabel, nullptr, true).x + GitPad + ItemGap;
-    const float GitButtonsWidth = ImGui::CalcTextSize("Git").x + GitPad + LiveButtonWidth + HandoffWidth + ModelPickerWidth;
+    Session* const ReviewTarget = ReviewTargetFor(CurrentSession);
+    const bool ReviewOpen = ReviewTarget != nullptr && BlenderReviewId_ == ReviewTarget->Rec.Id;
+    const bool HasBlenderButton = ReviewTarget != nullptr || BlenderReviewId_ == CurrentSession.Rec.Id;
+    const float BlenderButtonWidth = HasBlenderButton == true ? ImGui::CalcTextSize(REVIEW_BUTTON_LABEL).x + GitPad + ItemGap : 0.0f;
+    const float GitButtonsWidth = ImGui::CalcTextSize("Git").x + GitPad + LiveButtonWidth + BlenderButtonWidth + HandoffWidth + ModelPickerWidth;
     const float RightStartX = Size.x - ButtonsWidth - ShortcutWidth - ItemGap * (HasMaximize ? 4 : 3) - 4 * Scale;
     const float GitStartX = std::min((Size.x - GitButtonsWidth) * 0.5f, RightStartX - ItemGap * 2 - GitButtonsWidth);
     if (GitStartX >= ContextEndX + ItemGap * 2)
@@ -187,23 +244,13 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4(UiHelpers::WithAlpha(AccentColor_, 95)));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::ColorConvertU32ToFloat4(UiHelpers::WithAlpha(AccentColor_, 150)));
         ImGui::SameLine(0, ItemGap);
-        const bool HandoffReady = PendingHandoff != nullptr && PendingHandoff->Ready == true;
-        if (HandoffReady == true)
-        {
-            ImGui::PushStyleColor(ImGuiCol_Button, AccentColorV4_);
-        }
-        ImGui::BeginDisabled(PendingHandoff == nullptr && CurrentSession.IsRunning() == false);
+        ImGui::BeginDisabled(PendingHandoff != nullptr || CurrentSession.IsRunning() == false);
         const bool HandoffClicked = ImGui::Button(HandoffLabel);
         ImGui::EndDisabled();
-        if (HandoffReady == true)
-        {
-            ImGui::PopStyleColor();
-        }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) == true)
         {
-            const std::string Tip = PendingHandoff == nullptr ? std::string("Ask this session to write a handoff summary, so the work can continue in a fresh session with a clean context")
-                                    : HandoffReady == true    ? "Start a fresh session that reads the summary and carries on:\n" + PendingHandoff->Path + "\nRight-click for more"
-                                                              : "Waiting for the session to write the summary:\n" + PendingHandoff->Path + "\nRight-click for more";
+            const std::string Tip = PendingHandoff == nullptr ? std::string("Start a fresh session and have this one send it a handoff summary, so the work continues with a clean context")
+                                                              : "Writing the handoff summary for " + PendingHandoff->FreshName + ":\n" + PendingHandoff->Path + "\nRight-click for more";
             ImGui::SetTooltip("%s", Tip.c_str());
         }
         if (PendingHandoff != nullptr && ImGui::BeginPopupContextItem("##handoffMenu") == true)
@@ -212,13 +259,9 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
             {
                 Platform::Reveal(PendingHandoff->Path);
             }
-            if (ImGui::MenuItem("Continue fresh now") == true)
+            if (ImGui::MenuItem("Tell new session to read the summary", nullptr, false, std::filesystem::exists(PendingHandoff->Path) == true) == true)
             {
-                ContinueFromHandoff(CurrentSession);
-            }
-            if (ImGui::MenuItem("Ask for a new summary", nullptr, false, CurrentSession.IsRunning() == true) == true)
-            {
-                RequestHandoff(CurrentSession);
+                TellFreshToReadHandoff(CurrentSession);
             }
             if (ImGui::MenuItem("Discard") == true)
             {
@@ -228,14 +271,7 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
         }
         if (HandoffClicked == true)
         {
-            if (PendingHandoff == nullptr)
-            {
-                RequestHandoff(CurrentSession);
-            }
-            else if (HandoffReady == true)
-            {
-                ContinueFromHandoff(CurrentSession);
-            }
+            RequestHandoff(CurrentSession);
         }
         ImGui::SameLine(0, ItemGap);
         if (HasLiveButton == true)
@@ -269,6 +305,41 @@ void App::DrawPane(Session& CurrentSession, ImVec2 Pos, ImVec2 Size, int Index)
             {
                 ImGui::SetTooltip("%s", HasPreview == true ? "Live picture available: show what this session's Unreal editor or game is drawing"
                                                            : "The live capture stopped. Click to close the live view");
+            }
+            ImGui::SameLine(0, ItemGap);
+        }
+        if (HasBlenderButton == true)
+        {
+            const Session& ReviewSession = ReviewTarget != nullptr ? *ReviewTarget : CurrentSession;
+            if (ReviewOpen == true)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, AccentColorV4_);
+            }
+            if (ImGui::Button(REVIEW_BUTTON_LABEL) == true)
+            {
+                ToggleBlenderReview(ReviewSession.Rec.Id);
+            }
+            if (ReviewOpen == true)
+            {
+                ImGui::PopStyleColor();
+            }
+            const bool HasBlenderPicture = HasFreshBlenderFrame(ReviewSession) == true;
+            const ImVec2 ReviewMin = ImGui::GetItemRectMin();
+            const ImVec2 ReviewMax = ImGui::GetItemRectMax();
+            const ImVec2 ReviewDot(ReviewMin.x + 5 * Scale + 3.5f * Scale, (ReviewMin.y + ReviewMax.y) * 0.5f);
+            ImGui::GetWindowDrawList()->AddCircleFilled(ReviewDot, 3.5f * Scale, HasBlenderPicture == true ? IM_COL32(230, 50, 50, 255) : IM_COL32(130, 134, 145, 255));
+            if (ImGui::IsItemHovered() == true)
+            {
+                std::string Tip = "Review the 3D model: live Blender picture, mark what you don't like and send it back";
+                if (ReviewSession.Rec.Id != CurrentSession.Rec.Id)
+                {
+                    Tip += " (from " + ReviewSession.Rec.Name + ")";
+                }
+                if (HasBlenderPicture == false)
+                {
+                    Tip += "\nNo live picture yet: open it, then use Connect Blender";
+                }
+                ImGui::SetTooltip("%s", Tip.c_str());
             }
             ImGui::SameLine(0, ItemGap);
         }
@@ -397,28 +468,20 @@ void App::DrawShellActivity(const Session& CurrentSession, const ImVec2 PaneTopL
         return;
     }
     constexpr size_t MAX_ROWS = 3;
-    constexpr double SLOWER_THAN_USUAL = 1.15;
     const float Scale = UiScale_;
     const float Margin = 8 * Scale;
     const float Pad = 7 * Scale;
     const bool LiveShown = LiveViewIds_.count(CurrentSession.Rec.Id) > 0;
-    const float Width = std::min(PaneSize.x * (LiveShown == true ? 0.5f : 0.6f) - Margin * 2, 460 * Scale);
+    const float Width = std::min(PaneSize.x * (LiveShown == true ? 0.5f : 0.6f) - Margin * 2, 340 * Scale);
     if (Width < 160 * Scale)
     {
         return;
     }
 
-    struct Row
+    struct Row : ShellRow
     {
         const ActiveCommand* Command = nullptr;
-        std::string Kind;
-        std::string Title;
-        std::string Elapsed;
-        std::string Hint;
         std::string Output;
-        float Fraction = 0;
-        bool Indeterminate = false;
-        ImU32 Fill = 0;
     };
     constexpr std::time_t MIN_SHOW_SECONDS = 3;
     const std::time_t Now = std::time(nullptr);
@@ -439,49 +502,12 @@ void App::DrawShellActivity(const Session& CurrentSession, const ImVec2 PaneTopL
     {
         const ActiveCommand& Command = Commands[Index];
         Row Current;
+        static_cast<ShellRow&>(Current) = BuildShellRow(Command, Now);
         Current.Command = &Command;
-        const double Elapsed = static_cast<double>(std::max<std::time_t>(0, Now - Command.StartedAt));
-        Current.Kind = Command.Type == ActiveCommand::Kind::Shell ? "shell" : Command.Type == ActiveCommand::Kind::Background ? "background" : "monitor";
-        Current.Title = Command.Description.empty() == false ? Command.Description : Command.Command;
-        Current.Elapsed = FormatDuration(Elapsed);
-        const double Typical = Command.Type == ActiveCommand::Kind::Monitor ? -1 : CommandTiming_.Typical(CommandTiming::KeyFor(Command.Command));
-        const double Limit = Command.Deadline != 0 ? static_cast<double>(Command.Deadline - Command.StartedAt) : 0;
-        const std::string LimitText = Command.Type == ActiveCommand::Kind::Shell && Limit > 0 ? "  -  stops at the " + FormatRoughDuration(Limit) + " limit" : "";
-        if (Command.Type == ActiveCommand::Kind::Monitor && Limit > 0)
-        {
-            Current.Fraction = static_cast<float>(Elapsed / Limit);
-            Current.Fill = AccentColor_;
-            Current.Hint = "watching  -  ends on its own in " + FormatRoughDuration(std::max(0.0, Limit - Elapsed));
-        }
-        else if (Typical > 0 && Elapsed > Typical * SLOWER_THAN_USUAL)
-        {
-            Current.Fraction = 1.0f;
-            Current.Fill = UsageWarningColor_;
-            Current.Hint = "taking longer than usual (~" + FormatRoughDuration(Typical) + ")" + LimitText;
-        }
-        else if (Typical > 0)
-        {
-            Current.Fraction = static_cast<float>(Elapsed / Typical);
-            Current.Fill = AccentColor_;
-            Current.Hint = "usually ~" + FormatRoughDuration(Typical) + ", about " + FormatRoughDuration(std::max(0.0, Typical - Elapsed)) + " left" + LimitText;
-        }
-        else if (Command.Type == ActiveCommand::Kind::Shell && Limit > 0)
-        {
-            Current.Fraction = static_cast<float>(Elapsed / Limit);
-            Current.Fill = UiHelpers::WithAlpha(TextDisabledColorU32_, 170);
-            Current.Hint = "no estimate yet" + LimitText;
-        }
-        else
-        {
-            Current.Indeterminate = true;
-            Current.Fill = UiHelpers::WithAlpha(AccentColor_, 200);
-            Current.Hint = Command.Type == ActiveCommand::Kind::Monitor ? "watching" : "no estimate yet  -  runs until it finishes";
-        }
         if (Command.OutputFile.empty() == false)
         {
             Current.Output = OutputTail(Command.OutputFile);
         }
-        Current.Fraction = std::clamp(Current.Fraction, 0.0f, 1.0f);
         Rows.push_back(Current);
     }
 
@@ -491,7 +517,7 @@ void App::DrawShellActivity(const Session& CurrentSession, const ImVec2 PaneTopL
     float Height = Pad * 2;
     for (const Row& Current : Rows)
     {
-        Height += LineHeight * (Current.Output.empty() == true ? 2.0f : 3.0f) + BarHeight + 6 * Scale;
+        Height += LineHeight + BarHeight + 3 * Scale;
     }
     Height += RowGap * static_cast<float>(Rows.size() - 1);
     const size_t Hidden = Commands.size() - Rows.size();
@@ -537,18 +563,7 @@ void App::DrawShellActivity(const Session& CurrentSession, const ImVec2 PaneTopL
         {
             DrawList->AddRectFilled(TrackMin, ImVec2(Left + Inner * Current.Fraction, Y + BarHeight), Current.Fill, BarHeight * 0.5f);
         }
-        Y += BarHeight + 3 * Scale;
-
-        const std::string Hint = TruncateToWidth(Current.Hint, Inner);
-        DrawList->AddText(ImVec2(Left, Y), Current.Fill == UsageWarningColor_ ? UsageWarningColor_ : UiHelpers::WithAlpha(TextColorU32_, 190), Hint.c_str());
-        Y += LineHeight;
-        if (Current.Output.empty() == false)
-        {
-            const std::string Output = TruncateToWidth("> " + Current.Output, Inner);
-            DrawList->AddText(ImVec2(Left, Y), UiHelpers::WithAlpha(TextColorU32_, 170), Output.c_str());
-            Y += LineHeight;
-        }
-        Y += RowGap;
+        Y += BarHeight + RowGap;
     }
     if (Hidden > 0)
     {
@@ -573,6 +588,14 @@ void App::DrawShellActivity(const Session& CurrentSession, const ImVec2 PaneTopL
                 ImGui::TextUnformatted(Command.Description.c_str());
             }
             ImGui::TextDisabled("%s", Command.Command.c_str());
+            if (Index < Rows.size())
+            {
+                ImGui::TextUnformatted(Rows[Index].Hint.c_str());
+                if (Rows[Index].Output.empty() == false)
+                {
+                    ImGui::TextDisabled("> %s", Rows[Index].Output.c_str());
+                }
+            }
         }
         ImGui::PopTextWrapPos();
         ImGui::EndTooltip();

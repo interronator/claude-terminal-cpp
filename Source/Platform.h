@@ -28,12 +28,14 @@ public:
     static void Reveal(const std::string& Path);                                                  // open in file manager
     static void ShowInFolder(const std::string& Path);                                            // file manager with the file selected
     static bool CanPickFolder();
+    static unsigned long long TotalRamBytes();  // physical memory of this PC, 0 if unknown
     static bool IsOnPath(const std::string& Program);  // true if a program with this name resolves on PATH
     static void Shutdown(GLFWwindow* CurrentWindow);
 
     // True if the OS clipboard currently holds image data (e.g. a Snipping Tool / Win+Shift+S capture)
     // rather than text.
     static bool ClipboardHasImage();
+    static bool ClipboardHasText();
     // Tints the native window titlebar (Windows 11 22000+ via DWM). No-op elsewhere / on older Windows.
     static void ApplyTitlebarColors(GLFWwindow* CurrentWindow, RgbColor Caption, RgbColor Text);
 

@@ -36,15 +36,52 @@ void App::PollScreenshots(Session& CurrentSession)
     {
         return;
     }
+    if (ScannerWorker_.IsBusy(Id) == true)
+    {
+        return;
+    }
     NextPoll->second = Now_ + POLL_INTERVAL_SECONDS;
 
     const std::string Tag = ScreenshotFinder::SessionTag(Id);
     const std::string OwnDirectory = Tag.empty() == true ? std::string() : ScreenshotFinder::SessionShotDirectory(SessionProjectDir(CurrentSession), Tag).string();
-    TranscriptScanner& Scanner = TranscriptScanners_[Id];
-    const std::vector<TranscriptScanner::Shot> Shots = Scanner.Poll(CurrentSession.Rec.ClaudeSessionId, CurrentSession.Rec.Cwd, OwnDirectory, Tag, Now_);
+    std::shared_ptr<TranscriptScanner>& Scanner = TranscriptScanners_[Id];
+    if (Scanner == nullptr)
+    {
+        Scanner = std::make_shared<TranscriptScanner>();
+    }
+    ScannerWorker::Job NewJob;
+    NewJob.SessionId = Id;
+    NewJob.Scanner = Scanner;
+    NewJob.ClaudeSessionId = CurrentSession.Rec.ClaudeSessionId;
+    NewJob.Cwd = CurrentSession.Rec.Cwd;
+    NewJob.OwnDirectory = OwnDirectory;
+    NewJob.Tag = Tag;
+    NewJob.Now = Now_;
+    ScannerWorker_.Submit(std::move(NewJob));
+}
+
+void App::ApplyScanResults()
+{
+    for (const ScannerWorker::Result& Done : ScannerWorker_.TakeResults())
+    {
+        Session* const Target = FindSession(Done.SessionId);
+        const std::map<std::string, std::shared_ptr<TranscriptScanner>>::const_iterator Found = TranscriptScanners_.find(Done.SessionId);
+        if (Target == nullptr || Found == TranscriptScanners_.end())
+        {
+            continue;
+        }
+        ApplyScanResult(*Target, *Found->second, Done.Shots);
+    }
+}
+
+void App::ApplyScanResult(Session& CurrentSession, TranscriptScanner& Scanner, const std::vector<TranscriptScanner::Shot>& Shots)
+{
+    const std::string& Id = CurrentSession.Rec.Id;
     NotePeerMessages(CurrentSession, Scanner);
     CurrentSession.BackgroundTasks = CurrentSession.IsRunning() == true ? Scanner.RunningBackgroundTasks(CurrentSession.LaunchedAt) : 0;
-    RunningCommands_[Id] = CurrentSession.IsRunning() == true ? Scanner.RunningCommands(CurrentSession.LaunchedAt) : std::vector<TranscriptScanner::ActiveCommand>();
+    std::vector<TranscriptScanner::ActiveCommand> NowRunning = CurrentSession.IsRunning() == true ? Scanner.RunningCommands(CurrentSession.LaunchedAt) : std::vector<TranscriptScanner::ActiveCommand>();
+    ShellHistory_.Update(Id, NowRunning, std::time(nullptr));
+    RunningCommands_[Id] = std::move(NowRunning);
     OverdueShells_[Id] = CurrentSession.IsRunning() == true ? Scanner.OverdueShells(CurrentSession.LaunchedAt) : std::vector<TranscriptScanner::ActiveCommand>();
     for (const TranscriptScanner::Shot& Found : Shots)
     {
@@ -58,25 +95,10 @@ void App::PollScreenshots(Session& CurrentSession)
     }
 }
 
-void App::DrawScreenshotPanel(const float Width)
+void App::DrawScreenshotsTab()
 {
-    const float Scale = UiScale_;
     const bool ProjectSelected = ProjectScopeId_.empty() == false;
-
-    std::set<std::string> ShownSessions;
-    ShownSessions.insert(State_.Ui.ActiveId);
-    bool Grew = true;
-    while (Grew == true)
-    {
-        Grew = false;
-        for (const std::unique_ptr<Session>& Candidate : Sessions_)
-        {
-            if (Candidate->Rec.ParentId.empty() == false && ShownSessions.count(Candidate->Rec.ParentId) > 0 && ShownSessions.insert(Candidate->Rec.Id).second == true)
-            {
-                Grew = true;
-            }
-        }
-    }
+    const std::set<std::string> ShownSessions = SelectedSessionFamily();
 
     std::vector<const ScreenshotFeed::Entry*> Visible;
     std::set<std::string> VisiblePaths;
@@ -103,26 +125,6 @@ void App::DrawScreenshotPanel(const float Width)
             continue;
         }
         Visible.push_back(&Item);
-    }
-
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, SurfaceColorV4_);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8 * Scale, 8 * Scale));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6 * Scale, 6 * Scale));
-    ImGui::BeginChild("##shots", ImVec2(Width, 0), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted("Screenshots");
-    ImGui::SameLine();
-    ImGui::TextDisabled("%d", static_cast<int>(Visible.size()));
-    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetFrameHeight() - 8 * Scale);
-    if (ImGui::Button(">", ImVec2(ImGui::GetFrameHeight(), 0)) == true)
-    {
-        State_.Ui.ScreenshotPanelOpen = false;
-        MarkDirty();
-    }
-    if (ImGui::IsItemHovered() == true)
-    {
-        ImGui::SetTooltip("Hide screenshots");
     }
 
     ImGui::TextDisabled("%s", ProjectSelected == true ? "From every session in this project" : ShownSessions.size() > 1 ? "From the selected session and its children" : "From the selected session");
@@ -217,10 +219,6 @@ void App::DrawScreenshotPanel(const float Width)
         ShotAspects_.erase(Path);
     }
     ImGui::EndChild();
-
-    ImGui::EndChild();
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor();
 }
 
 bool App::DrawScreenshotCard(const ScreenshotFeed::Entry& Item, const float Width)

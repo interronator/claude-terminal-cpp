@@ -1,9 +1,11 @@
 // Windows pseudo-console (ConPTY) backend.
 #include <windows.h>
+#include <psapi.h>
 
 #include <atomic>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include "Pty.h"
 #include "WinStrings.h"
@@ -208,6 +210,37 @@ public:
         {
             TerminateProcess(Proc_, 1);
         }
+    }
+
+    unsigned long long MemoryBytes() const override
+    {
+        if (Job_ == nullptr)
+        {
+            return 0;
+        }
+        constexpr DWORD MAX_PROCESSES = 512;
+        std::vector<char> Buffer(sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + sizeof(ULONG_PTR) * MAX_PROCESSES);
+        JOBOBJECT_BASIC_PROCESS_ID_LIST* const List = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(Buffer.data());
+        if (QueryInformationJobObject(Job_, JobObjectBasicProcessIdList, List, static_cast<DWORD>(Buffer.size()), nullptr) == FALSE)
+        {
+            return 0;
+        }
+        unsigned long long Total = 0;
+        for (DWORD Index = 0; Index < List->NumberOfProcessIdsInList; Index++)
+        {
+            HANDLE const Process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(List->ProcessIdList[Index]));
+            if (Process == nullptr)
+            {
+                continue;
+            }
+            PROCESS_MEMORY_COUNTERS Counters{};
+            if (GetProcessMemoryInfo(Process, &Counters, sizeof(Counters)) != FALSE)
+            {
+                Total += Counters.WorkingSetSize;
+            }
+            CloseHandle(Process);
+        }
+        return Total;
     }
 
 private:

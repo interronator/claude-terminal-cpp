@@ -62,8 +62,8 @@ void App::AutoTitleTick(Session& CurrentSession)
     {
         return;
     }
-    const std::map<std::string, TranscriptScanner>::const_iterator Scanner = TranscriptScanners_.find(CurrentSession.Rec.Id);
-    if (Scanner == TranscriptScanners_.end() || SessionTitler::IsUsablePrompt(Scanner->second.FirstUserPrompt()) == false)
+    const std::map<std::string, std::shared_ptr<TranscriptScanner>>::const_iterator Scanner = TranscriptScanners_.find(CurrentSession.Rec.Id);
+    if (Scanner == TranscriptScanners_.end() || SessionTitler::IsUsablePrompt(Scanner->second->FirstUserPrompt()) == false)
     {
         return;
     }
@@ -72,7 +72,7 @@ void App::AutoTitleTick(Session& CurrentSession)
     {
         Argv.push_back("claude");
     }
-    Titler_.Request(Argv, CurrentSession.Rec.Id, CurrentSession.Rec.Name, Scanner->second.FirstUserPrompt());
+    Titler_.Request(Argv, CurrentSession.Rec.Id, CurrentSession.Rec.Name, Scanner->second->FirstUserPrompt());
 }
 
 void App::ApplyAutoTitles()

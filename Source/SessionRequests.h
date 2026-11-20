@@ -33,10 +33,24 @@ public:
         return InboxDir() / "Done";
     }
 
+    static std::filesystem::path StartedDir()
+    {
+        return InboxDir() / "Started";
+    }
+
     static void EnsureInbox()
     {
         std::error_code ErrorCode;
         std::filesystem::create_directories(DoneDir(), ErrorCode);
+        std::filesystem::create_directories(StartedDir(), ErrorCode);
+    }
+
+    static void WriteStarted(const std::string& RequestFile, const std::string& Name, const std::string& Tag)
+    {
+        std::error_code ErrorCode;
+        std::filesystem::create_directories(StartedDir(), ErrorCode);
+        std::ofstream Stream(StartedDir() / (std::filesystem::path(RequestFile).stem().string() + ".txt"), std::ios::binary);
+        Stream << "name: " << Name << "\ntag: " << Tag << "\n";
     }
 
     // Tags of sessions that dropped "<tag>.done" into the Done folder to say they are finished and need nothing more.
@@ -73,11 +87,18 @@ public:
         return "You are running inside the Claude Terminal app, which shows each Claude session in its own pane. When the user asks you to do "
                "several separate tasks (for example tasks you suggested, or a list they gave), do not do them all yourself or with subagents: start "
                "one new Claude Terminal session per task so they run side by side. To start a session, write one JSON file per task into the folder " +
-               Inbox + " with the fields name (a short session name), prompt (a complete, self-contained description of the task, because the new "
-               "session has none of your context), cwd (the folder to work in; use your current project folder unless the task belongs elsewhere) "
-               "and from (set it to '" + Tag + "'). Write each file under a name ending in .tmp first, then rename it to end in .json, so the app "
-               "never reads a half-written file. The app opens each session within a couple of seconds and sends it the prompt. When the tasks "
-               "touch related code, say in each prompt which other sessions you started and for which task, and tell it to coordinate with them. "
+               Inbox + " with the fields name (a short unique session name), cwd (the folder to work in; use your current project folder unless the "
+               "task belongs elsewhere) and from (set it to '" + Tag + "'). Do not put the task in the file: the new session starts empty. Write each "
+               "file under a name ending in .tmp first, then rename it to end in .json, so the app never reads a half-written file. Within a couple of "
+               "seconds the app opens the session, and once its Claude has finished loading and is ready it writes <file name without extension>.txt in " +
+               StartedDir().string() + " containing the new session's name and tag. Wait for that file (retry every few seconds; do not message "
+               "before it exists), find the ListAgents row whose name ends with that tag, and give the session its task with SendMessage: a complete, self-contained description, because it has none of your context. In that "
+               "message also say that you started it (your name '" + PeerName + "', tag " + Tag + "), to report back to you with SendMessage when "
+               "finished or blocked, and that when it is completely finished and needs nothing more it should make its very last action creating an "
+               "empty file named " + DoneDir().string() + "\\<its own tag>.done (the app then closes it; not when it is blocked or the user may want "
+               "to talk to it). After sending, check ListAgents after about 30 seconds: if the session still shows idle and has not replied, send the "
+               "task again, and again if needed. When the tasks touch related code, say in each message which other sessions you started and for which task, and "
+               "tell it to coordinate with them. "
                "Give each session its own files and folders to edit, name the shared contract (a short doc) they both follow, and state the order: "
                "which session must finish something first and which one waits for its message, so waiting is planned. Tell each session to ignore "
                "build or test failures in the other sessions' files until they report done. "
@@ -89,7 +110,10 @@ public:
                "Reply when another session messages you. Keep messages short, and only send them when they help avoid conflicts or duplicate work. "
                "In ListAgents this session is named '" + PeerName + "'. Every session started by this app has a name ending in its tag (cs-xxxxxxxx), so "
                "when you are given a tag, pick the ListAgents row whose name ends with it. A session you start is told to report back to you with "
-               "SendMessage when it finishes or is blocked: read those reports and act on them.";
+               "SendMessage when it finishes or is blocked: read those reports and act on them. If you start child sessions to make visual edits "
+               "or additions, the screenshots panel in the terminal only shows screenshots saved in your own session's screenshot folder, so once "
+               "the child sessions are done, capture the final screenshots of what was changed or added yourself, save them to your own folder with "
+               "your own tag, and mention their full paths, so the user sees the results in the screenshots panel.";
     }
 
     std::vector<Request> Collect()
@@ -150,10 +174,6 @@ private:
         Parsed.Prompt = StringField(Root, "prompt");
         Parsed.Cwd = StringField(Root, "cwd");
         Parsed.From = StringField(Root, "from");
-        if (Parsed.Prompt.empty() == true)
-        {
-            Parsed.Error = "it has no prompt";
-        }
         return Parsed;
     }
 

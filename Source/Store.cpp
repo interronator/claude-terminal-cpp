@@ -88,6 +88,7 @@ State Store::ParseState(const json& Root)
         Loaded.Ui.SidebarCollapsed = UiJson.value("sidebarCollapsed", false);
         Loaded.Ui.ScreenshotPanelWidth = UiJson.value("screenshotPanelWidth", 340.0f);
         Loaded.Ui.ScreenshotPanelOpen = UiJson.value("screenshotPanelOpen", true);
+        Loaded.Ui.RightPanelTab = UiJson.value("rightPanelTab", "shots");
         Loaded.Ui.HiddenScreenshots = UiJson.value("hiddenScreenshots", std::set<std::string>{});
         Loaded.Ui.CloseWithoutConfirm = UiJson.value("closeWithoutConfirm", false);
         Loaded.Ui.ArchiveOpen = UiJson.value("archiveOpen", false);
@@ -108,6 +109,9 @@ State Store::ParseState(const json& Root)
         Loaded.AppSettings.GitHubEnabled = SettingsJson.value("githubEnabled", false);
         Loaded.AppSettings.FontSize = SettingsJson.value("fontSize", 16);
         Loaded.AppSettings.PaneTitleScale = std::clamp(SettingsJson.value("paneTitleScale", 100), 70, 200);
+        Loaded.AppSettings.RamLimitMode = std::clamp(SettingsJson.value("ramLimitMode", 0), 0, 2);
+        Loaded.AppSettings.RamLimitPercent = std::clamp(SettingsJson.value("ramLimitPercent", 50), 5, 100);
+        Loaded.AppSettings.RamLimitGb = std::clamp(SettingsJson.value("ramLimitGb", 16), 1, 4096);
         if (SettingsJson.contains("theme") && SettingsJson["theme"].is_object())
         {
             const json& ThemeJson = SettingsJson["theme"];
@@ -245,6 +249,7 @@ bool Store::Save() const
                   {"sidebarCollapsed", AppState.Ui.SidebarCollapsed},
                   {"screenshotPanelWidth", AppState.Ui.ScreenshotPanelWidth},
                   {"screenshotPanelOpen", AppState.Ui.ScreenshotPanelOpen},
+                  {"rightPanelTab", AppState.Ui.RightPanelTab},
                   {"hiddenScreenshots", AppState.Ui.HiddenScreenshots},
                   {"closeWithoutConfirm", AppState.Ui.CloseWithoutConfirm},
                   {"archiveOpen", AppState.Ui.ArchiveOpen},
@@ -264,6 +269,9 @@ bool Store::Save() const
                         {"githubEnabled", AppState.AppSettings.GitHubEnabled},
                         {"fontSize", AppState.AppSettings.FontSize},
                         {"paneTitleScale", AppState.AppSettings.PaneTitleScale},
+                        {"ramLimitMode", AppState.AppSettings.RamLimitMode},
+                        {"ramLimitPercent", AppState.AppSettings.RamLimitPercent},
+                        {"ramLimitGb", AppState.AppSettings.RamLimitGb},
                         {"keybindings", KeysJson},
                         {"theme",
                          {{"background", ColorJson(Theme.Background)},

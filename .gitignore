@@ -30,3 +30,7 @@ imgui.ini
 *.key
 *.pfx
 *.p12
+
+# Python bytecode
+__pycache__/
+*.pyc

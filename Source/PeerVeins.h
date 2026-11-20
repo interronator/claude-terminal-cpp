@@ -33,6 +33,13 @@ public:
         Panes_.clear();
         Chips_.clear();
     }
+    void BeginSidebarFrame() { Rows_.clear(); }
+    void AddRow(const std::string& Id, const ImVec2 Min, const ImVec2 Max) { Rows_[Id] = {Min, Max}; }
+    const Box* FindRow(const std::string& Id) const
+    {
+        const std::map<std::string, Box>::const_iterator Found = Rows_.find(Id);
+        return Found != Rows_.end() ? &Found->second : nullptr;
+    }
     void AddPane(const std::string& Id, const ImVec2 Min, const ImVec2 Max) { Panes_[Id] = {Min, Max}; }
     void AddChip(const std::string& Id, const ImVec2 Min, const ImVec2 Max) { Chips_[Id] = {Min, Max}; }
     const Box* FindPane(const std::string& Id) const
@@ -78,6 +85,29 @@ public:
         }
         const ImVec2 StartHandle(Start.x, EndFromBelow == true ? Start.y - Lift : Top);
         const ImVec2 EndHandle(End.x, EndFromBelow == true ? End.y + Lift * 0.5f : Top);
+        std::vector<ImVec2> Points;
+        Points.reserve(CURVE_POINTS + 1);
+        for (int Index = 0; Index <= CURVE_POINTS; Index++)
+        {
+            const float Amount = static_cast<float>(Index) / static_cast<float>(CURVE_POINTS);
+            const float Rest = 1.0f - Amount;
+            const float StartWeight = Rest * Rest * Rest;
+            const float StartHandleWeight = 3.0f * Rest * Rest * Amount;
+            const float EndHandleWeight = 3.0f * Rest * Amount * Amount;
+            const float EndWeight = Amount * Amount * Amount;
+            Points.push_back(ImVec2(StartWeight * Start.x + StartHandleWeight * StartHandle.x + EndHandleWeight * EndHandle.x + EndWeight * End.x,
+                                    StartWeight * Start.y + StartHandleWeight * StartHandle.y + EndHandleWeight * EndHandle.y + EndWeight * End.y));
+        }
+        return Points;
+    }
+
+    // From the top of a window up and over to the right edge of a left panel row, arriving horizontally.
+    static std::vector<ImVec2> SideCurve(const ImVec2 Start, const ImVec2 End, const float Scale)
+    {
+        const float Distance = std::sqrt((End.x - Start.x) * (End.x - Start.x) + (End.y - Start.y) * (End.y - Start.y));
+        const float Lift = std::clamp(Distance * 0.35f, MIN_LIFT * Scale, MAX_LIFT * Scale);
+        const ImVec2 StartHandle(Start.x, Start.y - Lift);
+        const ImVec2 EndHandle(End.x + Lift, End.y);
         std::vector<ImVec2> Points;
         Points.reserve(CURVE_POINTS + 1);
         for (int Index = 0; Index <= CURVE_POINTS; Index++)
@@ -289,4 +319,5 @@ private:
 
     std::map<std::string, Box> Panes_;
     std::map<std::string, Box> Chips_;
+    std::map<std::string, Box> Rows_;
 };

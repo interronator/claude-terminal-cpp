@@ -23,4 +23,5 @@ public:
     virtual void Write(const char* Data, size_t Length) = 0;
     virtual void Resize(int Cols, int Rows) = 0;
     virtual void Kill() = 0;  // also kills child processes; the destructor joins all threads
+    virtual unsigned long long MemoryBytes() const { return 0; }  // RAM used by the child and everything it started
 };

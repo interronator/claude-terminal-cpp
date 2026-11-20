@@ -442,12 +442,17 @@ void App::DrawTerminal(Session& CurrentSession, ImVec2 Size, bool IsActive)
             if (CurrentSession.Selecting)
             {
                 CurrentSession.Selecting = false;
-                if (CurrentSession.HasSelection == false && Hovered == true && Io.KeyCtrl == true)
+                if (CurrentSession.HasSelection == false && Hovered == true)
                 {
                     int Row = 0, Col = 0;
                     CellAt(Io.MousePos, Row, Col);
-                    const std::string LinkPath = PathLinks::FindExistingPath(CurrentTerminal, ViewTop + Row, Col);
-                    if (LinkPath.empty() == false)
+                    const std::string MentionId = Io.KeyCtrl == true ? FindSessionMention(CurrentSession, CurrentTerminal, ViewTop + Row, Col) : std::string();
+                    const std::string LinkPath = MentionId.empty() == true ? PathLinks::FindExistingPath(CurrentTerminal, ViewTop + Row, Col) : std::string();
+                    if (MentionId.empty() == false)
+                    {
+                        PendingMentionFocusId_ = MentionId;
+                    }
+                    else if (LinkPath.empty() == false)
                     {
                         PathLinks::Open(LinkPath);
                     }
@@ -505,11 +510,21 @@ void App::DrawTerminal(Session& CurrentSession, ImVec2 Size, bool IsActive)
         if (Hovered)
         {
             ImGuiMouseCursor Cursor = Reporting ? ImGuiMouseCursor_Arrow : ImGuiMouseCursor_TextInput;
-            if (Reporting == false && CurrentSession.Selecting == false && Io.KeyCtrl == true)
+            if (Reporting == false && CurrentSession.Selecting == false)
             {
                 int Row = 0, Col = 0;
                 CellAt(Io.MousePos, Row, Col);
-                if (PathLinks::FindExistingPath(CurrentTerminal, ViewTop + Row, Col).empty() == false)
+                const std::string MentionId = FindSessionMention(CurrentSession, CurrentTerminal, ViewTop + Row, Col);
+                if (MentionId.empty() == false)
+                {
+                    MentionHoverFromId_ = CurrentSession.Rec.Id;
+                    MentionHoverToId_ = MentionId;
+                }
+                if (MentionId.empty() == false && Io.KeyCtrl == true)
+                {
+                    Cursor = ImGuiMouseCursor_Hand;
+                }
+                else if (PathLinks::FindExistingPath(CurrentTerminal, ViewTop + Row, Col).empty() == false)
                 {
                     Cursor = ImGuiMouseCursor_Hand;
                 }

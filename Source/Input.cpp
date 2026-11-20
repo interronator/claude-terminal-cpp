@@ -3,6 +3,7 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <ctime>
@@ -189,6 +190,20 @@ void App::PushKey(int CurrentKey, int Action, int Mods)
 void App::PushDrop(const std::vector<std::string>& Paths)
 {
     Session* const ActiveSession = InputSession();
+    if (BlenderMarkup_.IsEditing() == true)
+    {
+        for (const std::string& Path : Paths)
+        {
+            std::string Extension = fs::path(Path).extension().string();
+            std::transform(Extension.begin(), Extension.end(), Extension.begin(), [](const unsigned char Character) { return static_cast<char>(std::tolower(Character)); });
+            if (Extension == ".png" || Extension == ".jpg" || Extension == ".jpeg" || Extension == ".webp" || Extension == ".bmp")
+            {
+                BlenderMarkup_.AttachReference(Path);
+                ShowToast("Attached " + Util::BaseName(Path) + " as the reference for this mark");
+                return;
+            }
+        }
+    }
     std::string FilePaths;
     for (const std::string& Path : Paths)
     {
@@ -250,6 +265,7 @@ void App::HandleEvents()
                 CurrentSession->InputSelected = false;
                 CurrentSession->FindOpen = false;
                 CurrentSession->ScrollOffset = 0;
+                CurrentSession->UserTypedAt = Now_;
                 CurrentSession->SendText(Util::Utf8(CurrentEvent.Cp), Now_, StatusCallback());
             }
         }
@@ -284,7 +300,8 @@ void App::Paste(Session& CurrentSession)
         return;
     }
 
-    const char* const Clipboard = glfwGetClipboardString(Window_);
+    const bool ImageOnly = Platform::ClipboardHasText() == false && Platform::ClipboardHasImage() == true;
+    const char* const Clipboard = ImageOnly == true ? nullptr : glfwGetClipboardString(Window_);
     const bool HasText = Clipboard != nullptr && *Clipboard != '\0';
     if (HasText == false)
     {
@@ -324,6 +341,7 @@ void App::Paste(Session& CurrentSession)
     }
     Session::StatusFn Callback = StatusCallback();
     double Now = Now_;
+    CurrentSession.UserTypedAt = Now;
     CurrentSession.Typing(Now, Callback,
                    [&](Terminal& CurrentTerminal)
                    {
@@ -483,6 +501,7 @@ void App::HandleKey(const InputEvent& CurrentEvent)
     {
         CurrentSession->FindOpen = false;
         CurrentSession->ScrollOffset = 0;
+        CurrentSession->UserTypedAt = Now_;
         CurrentSession->SendText(Bytes, Now_, Callback);
     };
 

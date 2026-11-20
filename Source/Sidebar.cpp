@@ -43,6 +43,7 @@ bool App::RowCloseButton(const ImVec2& Pos, const bool Hovered)
 void App::DrawSidebar(float Width)
 {
     const float Scale = UiScale_;
+    PeerVeins_.BeginSidebarFrame();
 
     // A row icon button (the "+"/"x" on project and session rows): transparent at rest so it reads
     // as part of the row, and on hover/press it fills with the exact same flat rectangle the row
@@ -199,6 +200,10 @@ void App::DrawSidebar(float Width)
             if (ImGui::MenuItem("Reveal folder"))
             {
                 Platform::Reveal(CurrentProject.Path);
+            }
+            if (ImGui::MenuItem("Auto mode for this project", nullptr, ProjectIsAuto(CurrentProject.Id)) == true)
+            {
+                SetProjectAutoMode(CurrentProject.Id, ProjectIsAuto(CurrentProject.Id) == false);
             }
             if (ImGui::MenuItem("Project log") == true)
             {

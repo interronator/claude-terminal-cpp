@@ -56,8 +56,11 @@ set(APP_SOURCES
   Source/Account.cpp Source/Input.cpp Source/Modals.cpp Source/NightlyBuildWindow.cpp
   Source/Pane.cpp Source/PaneModelPicker.cpp Source/MainPanels.cpp Source/EmptyMain.cpp Source/ReviewWindow.cpp Source/SessionRequestsPoll.cpp
   Source/ScreenshotPanel.cpp Source/QuickSearch.cpp Source/Sidebar.cpp Source/TerminalView.cpp
-  Source/Toolbar.cpp Source/StbImage.cpp Source/PeerOverlay.cpp Source/GeneralSession.cpp
-  Source/PromptSubmit.cpp Source/SidebarSessionTree.cpp Source/NewSessionStart.cpp Source/ChildProgress.cpp Source/BackgroundWatch.cpp)
+  Source/Toolbar.cpp Source/StbImage.cpp Source/PeerOverlay.cpp Source/SessionMentionLinks.cpp Source/GeneralSession.cpp
+  Source/PromptSubmit.cpp Source/SidebarSessionTree.cpp Source/NewSessionStart.cpp Source/ChildProgress.cpp Source/BackgroundWatch.cpp
+  Source/BlenderReviewWindow.cpp Source/BlenderReviewPanel.cpp Source/BlenderReviewer.cpp Source/BlenderMarkupExport.cpp
+  Source/MeshGeneratorJob.cpp Source/MeshGeneratorPanel.cpp Source/MeshGeneratorReview.cpp
+  Source/RightPanel.cpp Source/ShellsPanel.cpp)
 if(WIN32)
   list(APPEND APP_SOURCES Source/PtyWin.cpp Source/PlatformWin.cpp Resources/App.rc)
 else()
@@ -82,7 +85,7 @@ set_source_files_properties(Source/StbImage.cpp PROPERTIES SKIP_PRECOMPILE_HEADE
 
 if(WIN32)
   target_compile_definitions(claude-terminal PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
-  target_link_libraries(claude-terminal PRIVATE user32 shell32 ole32 shlwapi dwmapi winhttp)
+  target_link_libraries(claude-terminal PRIVATE user32 shell32 ole32 shlwapi dwmapi winhttp psapi)
   if(MSVC)
     # The standard getenv/sscanf/fopen calls are used on purpose so the code stays portable; silence MSVC's
     # "use the _s version" deprecation noise.

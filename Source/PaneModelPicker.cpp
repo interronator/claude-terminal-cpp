@@ -15,11 +15,11 @@ std::int64_t App::ContextWindowOf(const TranscriptScanner& Scanner) const
 std::string App::ModelLabelFor(const Session& CurrentSession) const
 {
     // A model picked in the header wins over the transcript's model, which names the model that answered (opusplan swaps between two).
-    const std::map<std::string, TranscriptScanner>::const_iterator Scanner = TranscriptScanners_.find(CurrentSession.Rec.Id);
+    const std::map<std::string, std::shared_ptr<TranscriptScanner>>::const_iterator Scanner = TranscriptScanners_.find(CurrentSession.Rec.Id);
     std::string ModelId = CurrentSession.Rec.Model;
     if (ModelId.empty() == true && Scanner != TranscriptScanners_.end())
     {
-        ModelId = Scanner->second.CurrentModel();
+        ModelId = Scanner->second->CurrentModel();
     }
     if (ModelId.empty() == true)
     {
@@ -32,6 +32,10 @@ std::string App::ModelLabelFor(const Session& CurrentSession) const
     if (ModelId == "opusplan")
     {
         return "Opus Plan";
+    }
+    if (ModelId == "opus")
+    {
+        return "Opus";
     }
     const ModelCatalog::Model Known = ModelCatalog_.Find(ModelId);
     if (Known.Id.empty() == false)
@@ -50,10 +54,10 @@ float App::PaneModelPickerWidth(const Session& CurrentSession) const
 
 void App::DrawPaneModelPicker(Session& CurrentSession, const float Width)
 {
-    const std::map<std::string, TranscriptScanner>::const_iterator Scanner = TranscriptScanners_.find(CurrentSession.Rec.Id);
+    const std::map<std::string, std::shared_ptr<TranscriptScanner>>::const_iterator Scanner = TranscriptScanners_.find(CurrentSession.Rec.Id);
     if (Scanner != TranscriptScanners_.end())
     {
-        ModelCatalog_.RefreshIfUnknown(Scanner->second.CurrentModel(), Session::Wake);
+        ModelCatalog_.RefreshIfUnknown(Scanner->second->CurrentModel(), Session::Wake);
     }
 
     std::vector<SessionDefaults::Choice> Latest;
@@ -87,13 +91,13 @@ void App::DrawPaneModelPicker(Session& CurrentSession, const float Width)
 
 void App::DrawContextMeter(const Session& CurrentSession, const float BarWidth, const float HeaderHeight)
 {
-    const std::map<std::string, TranscriptScanner>::const_iterator Scanner = TranscriptScanners_.find(CurrentSession.Rec.Id);
+    const std::map<std::string, std::shared_ptr<TranscriptScanner>>::const_iterator Scanner = TranscriptScanners_.find(CurrentSession.Rec.Id);
     if (Scanner == TranscriptScanners_.end())
     {
         return;
     }
-    const std::int64_t Window = Scanner->second.ContextWindow(ContextWindowOf(Scanner->second));
-    const int Percent = Scanner->second.ContextPercent(ContextWindowOf(Scanner->second));
+    const std::int64_t Window = Scanner->second->ContextWindow(ContextWindowOf(*Scanner->second));
+    const int Percent = Scanner->second->ContextPercent(ContextWindowOf(*Scanner->second));
     if (Percent < 0)
     {
         return;
@@ -122,7 +126,7 @@ void App::DrawContextMeter(const Session& CurrentSession, const float BarWidth, 
     ImGui::Dummy(ImVec2(TotalWidth, HeaderHeight));
     if (ImGui::IsItemHovered() == true)
     {
-        ImGui::SetTooltip("Context window in use: %s of %s tokens (%d%%)", FormatTokens(Scanner->second.ContextTokens()).c_str(), FormatTokens(Window).c_str(), Percent);
+        ImGui::SetTooltip("Context window in use: %s of %s tokens (%d%%)", FormatTokens(Scanner->second->ContextTokens()).c_str(), FormatTokens(Window).c_str(), Percent);
     }
 }
 

@@ -34,6 +34,34 @@ std::string App::RequestProjectId(const Session* const Sender, const std::string
     return ProjectId;
 }
 
+void App::WatchRequestedStart(Session& Target)
+{
+    if (Target.StartedFile.empty() == true)
+    {
+        return;
+    }
+    if (Target.ReadyAt == 0)
+    {
+        if (Target.CurrentStatus != Status::Idle || Target.PendingPrompt.empty() == false)
+        {
+            return;
+        }
+        SessionRequests::WriteStarted(Target.StartedFile, Target.Rec.Name, ScreenshotFinder::SessionTag(Target.Rec.Id));
+        Target.ReadyAt = Now_;
+        return;
+    }
+    if (Target.CurrentStatus != Status::Idle)
+    {
+        Target.StartedFile.clear();
+        return;
+    }
+    if (Target.NoTaskWarned == false && Now_ - Target.ReadyAt > NO_TASK_WARN_SECONDS)
+    {
+        Target.NoTaskWarned = true;
+        ShowToast("'" + Target.Rec.Name + "' is ready but has not received a task yet. Its parent may need to resend it.", true);
+    }
+}
+
 void App::PollSessionRequests()
 {
     for (const std::string& DoneTag : SessionRequests_.CollectDone())
@@ -76,27 +104,20 @@ void App::PollSessionRequests()
         {
             Fresh->Rec.Cwd = Current.Cwd;
         }
-        Fresh->PendingPrompt = Current.Prompt;
         if (Sender != nullptr)
         {
-            std::string ParentName = PeerLinks_.RegistryNameFor(Sender->Rec.ClaudeSessionId);
-            if (ParentName.empty() == true)
-            {
-                ParentName = PeerNames::For(Sender->Rec.Name, Sender->Rec.Id);
-            }
             Fresh->Rec.ParentId = Sender->Rec.Id;
             Fresh->Rec.Model = Sender->Rec.Model;
-            const std::map<std::string, TranscriptScanner>::const_iterator ParentScanner = TranscriptScanners_.find(Sender->Rec.Id);
+            const std::map<std::string, std::shared_ptr<TranscriptScanner>>::const_iterator ParentScanner = TranscriptScanners_.find(Sender->Rec.Id);
             if (Fresh->Rec.Model.empty() == true && ParentScanner != TranscriptScanners_.end())
             {
-                Fresh->Rec.Model = ParentScanner->second.CurrentModel();
+                Fresh->Rec.Model = ParentScanner->second->CurrentModel();
             }
-            Fresh->PendingPrompt = "You were started by the Claude Terminal session '" + Sender->Rec.Name + "' (tag " + ScreenshotFinder::SessionTag(Sender->Rec.Id) +
-                                   "). In ListAgents it is '" + ParentName + "', or the row whose name ends with that tag. When you finish or are blocked, send it a "
-                                   "short report with SendMessage. If you are completely finished and need nothing more from anyone, make your very last action "
-                                   "creating an empty file named " + (SessionRequests::DoneDir() / (ScreenshotFinder::SessionTag(Fresh->Rec.Id) + ".done")).string() +
-                                   " (the app then closes your session). Do not create it if you are blocked, waiting for an answer, or the user may want to talk "
-                                   "to you.\n\n" + Current.Prompt;
+        }
+        Fresh->StartedFile = Current.File;
+        if (Current.Prompt.empty() == false)
+        {
+            Fresh->PendingPrompt = Current.Prompt;
         }
         Fresh->Rec.WasRunning = true;  // TickSessions launches it in the background without taking focus
         State_.Ui.Collapsed[ProjectId] = false;
